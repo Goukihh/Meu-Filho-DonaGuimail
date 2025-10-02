@@ -1,0 +1,343 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background-color: #202225;
+    color: #dcddde;
+    overflow: hidden;
+}
+
+.app-container {
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Header */
+.header {
+    height: 56px;
+    background: linear-gradient(to right, rgba(47, 49, 54, 0.95), rgba(47, 49, 54, 0.85)), url('../assets/gragas_header_bg.png');
+    background-size: cover;
+    background-position: center;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 16px;
+    border-bottom: 1px solid #202225;
+    -webkit-app-region: drag;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+}
+
+.app-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.header-right {
+    display: flex;
+    gap: 8px;
+    -webkit-app-region: no-drag;
+}
+
+/* Buttons */
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-primary {
+    background-color: #5865f2;
+    color: #ffffff;
+}
+
+.btn-primary:hover {
+    background-color: #4752c4;
+}
+
+.btn-secondary {
+    background-color: #4e5058;
+    color: #ffffff;
+}
+
+.btn-secondary:hover {
+    background-color: #5d5f69;
+}
+
+/* Avatar Tabs */
+.avatar-tabs {
+    min-height: 68px;
+    background-color: #2f3136;
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    gap: 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-bottom: 1px solid #202225;
+}
+
+.avatar-tabs::-webkit-scrollbar {
+    height: 6px;
+}
+
+.avatar-tabs::-webkit-scrollbar-track {
+    background: #202225;
+}
+
+.avatar-tabs::-webkit-scrollbar-thumb {
+    background: #4e5058;
+    border-radius: 3px;
+}
+
+.avatar-tabs::-webkit-scrollbar-thumb:hover {
+    background: #5d5f69;
+}
+
+/* Avatar Tab Item */
+.avatar-tab {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.avatar-tab:hover .avatar-wrapper {
+    border-color: #5865f2;
+}
+
+.avatar-wrapper {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: 3px solid transparent;
+    overflow: hidden;
+    transition: all 0.2s;
+    background-color: #5865f2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.avatar-tab.active .avatar-wrapper {
+    border-color: #5865f2;
+    box-shadow: 0 0 0 2px #5865f2;
+}
+
+.avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.avatar-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    font-weight: 600;
+    color: #ffffff;
+    background: linear-gradient(135deg, #5865f2 0%, #7289da 100%);
+}
+
+.avatar-name {
+    margin-top: 4px;
+    font-size: 11px;
+    color: #b9bbbe;
+    max-width: 60px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+}
+
+.avatar-tab.active .avatar-name {
+    color: #ffffff;
+    font-weight: 600;
+}
+
+.avatar-status {
+    position: absolute;
+    top: 34px;
+    right: -2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 3px solid #2f3136;
+    background-color: #43b581;
+}
+
+.avatar-status.loading {
+    background-color: #faa61a;
+}
+
+.avatar-status.error {
+    background-color: #f04747;
+}
+
+/* Modal */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.85);
+    animation: fadeIn 0.2s;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.modal.show {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-content {
+    background-color: #36393f;
+    border-radius: 8px;
+    width: 440px;
+    max-width: 90%;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+    animation: slideIn 0.3s;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateY(-50px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid #2f3136;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h2 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.close {
+    font-size: 28px;
+    font-weight: 300;
+    color: #b9bbbe;
+    cursor: pointer;
+    line-height: 1;
+    transition: color 0.2s;
+}
+
+.close:hover {
+    color: #ffffff;
+}
+
+.modal-body {
+    padding: 20px;
+}
+
+.modal-body label {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    color: #b9bbbe;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    font-size: 12px;
+}
+
+.modal-body input {
+    width: 100%;
+    padding: 10px;
+    background-color: #202225;
+    border: 1px solid #202225;
+    border-radius: 4px;
+    color: #dcddde;
+    font-size: 14px;
+    transition: border-color 0.2s;
+}
+
+.modal-body input:focus {
+    outline: none;
+    border-color: #5865f2;
+}
+
+.modal-footer {
+    padding: 16px 20px;
+    background-color: #2f3136;
+    border-radius: 0 0 8px 8px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* Context Menu */
+.context-menu {
+    display: none;
+    position: fixed;
+    background-color: #18191c;
+    border-radius: 4px;
+    padding: 6px 0;
+    min-width: 180px;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+    z-index: 2000;
+}
+
+.context-menu.show {
+    display: block;
+}
+
+.context-menu-item {
+    padding: 8px 12px;
+    font-size: 14px;
+    color: #dcddde;
+    cursor: pointer;
+    transition: all 0.1s;
+}
+
+.context-menu-item:hover {
+    background-color: #5865f2;
+    color: #ffffff;
+}
+
+.context-menu-item-danger {
+    color: #f04747;
+}
+
+.context-menu-item-danger:hover {
+    background-color: #f04747;
+    color: #ffffff;
+}

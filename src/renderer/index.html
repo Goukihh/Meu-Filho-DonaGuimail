@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meu Filho</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <div class="header">
+            <div class="header-left">
+                <h1 class="app-title">Meu Filho</h1>
+            </div>
+            <div class="header-right">
+                <button id="add-account-btn" class="btn btn-primary">+ Adicionar Conta</button>
+            </div>
+        </div>
+        
+        <div class="avatar-tabs" id="avatar-tabs">
+            <!-- As abas de conta serão inseridas aqui dinamicamente -->
+        </div>
+    </div>
+
+    <!-- Modal para adicionar conta -->
+    <div id="add-account-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Adicionar Nova Conta</h2>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <label for="account-name">Nome da Conta:</label>
+                <input type="text" id="account-name" placeholder="Ex: Conta Principal">
+            </div>
+            <div class="modal-footer">
+                <button id="cancel-add-btn" class="btn btn-secondary">Cancelar</button>
+                <button id="confirm-add-btn" class="btn btn-primary">Adicionar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Menu de contexto para contas -->
+    <div id="context-menu" class="context-menu">
+        <div class="context-menu-item" data-action="rename">Renomear</div>
+        <div class="context-menu-item" data-action="clear-session">Limpar Sessão</div>
+        <div class="context-menu-item" data-action="reload">Recarregar</div>
+        <div class="context-menu-item context-menu-item-danger" data-action="remove">Remover</div>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>
