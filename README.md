@@ -1,6 +1,8 @@
 # 👽 Meu-Filho — DonaGuimail
 *Logar várias contas do Discord de forma simples*
 
+[![⭐ Give a Star](https://img.shields.io/badge/-Give%20a%20Star-ffcc00?style=flat&logo=github)](https://github.com/<seu-usuario>/Meu-Filho-DonaGuimail)
+
 ---
 
 ### 🇧🇷 —
@@ -18,13 +20,16 @@ Just install it, add your accounts, and switch between them whenever you want.
 ## Como usar / How to use
 
 **1) Instalar o Node.js (Windows) / Install Node.js (Windows)**
+
 winget install -e --id OpenJS.NodeJS
 
 **2) Clonar o repositório / Clone the repo**
+
 git clone https://github.com/<seu-usuario>/Meu-Filho-DonaGuimail.git
 cd Meu-Filho-DonaGuimail
 
 **3) Instalar dependências / Install dependencies**
+
 npm install
 npm run build
 
