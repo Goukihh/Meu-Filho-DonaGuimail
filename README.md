@@ -20,19 +20,19 @@ Just install it, add your accounts, and switch between them whenever you want.
 ## Como usar / How to use
 
 **1) Instalar o Node.js (Windows) / Install Node.js (Windows)**
-
+```bash
 winget install -e --id OpenJS.NodeJS
-
+```
 **2) Clonar o repositório / Clone the repo**
-
+```bash
 git clone https://github.com/<seu-usuario>/Meu-Filho-DonaGuimail.git
 cd Meu-Filho-DonaGuimail
-
+```
 **3) Instalar dependências / Install dependencies**
-
+```bash
 npm install
 npm run build
-
+```
 ---
 
 ### Rodar / Run —
