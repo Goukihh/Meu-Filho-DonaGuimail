@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0"
 echo ========================================
 echo    PUBLICANDO RELEASE NO GITHUB
 echo ========================================
