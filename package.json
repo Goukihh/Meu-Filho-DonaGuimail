@@ -9,7 +9,7 @@
     "build": "electron-builder --win --publish never",
     "build:portable": "electron-builder --win portable --publish never",
     "build:installer": "electron-builder --win nsis --publish never",
-    "build:single": "electron-builder --win nsis --publish never --config.win.target=nsis",
+    "build:single": "electron-builder --win nsis --publish never",
     "build:publish": "electron-builder --win nsis --publish always",
     "build:release": "electron-builder --win nsis --publish always"
   },
@@ -44,21 +44,8 @@
       "repo": "Meu-Filho-DonaGuimail"
     },
     "win": {
-      "target": [
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "build/icon.ico"
+      "target": "nsis",
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": false,
@@ -66,9 +53,6 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Meu Filho",
-      "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico",
-      "installerHeaderIcon": "build/icon.ico",
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true,
       "menuCategory": "Social",

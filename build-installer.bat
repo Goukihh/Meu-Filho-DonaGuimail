@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0"
 echo ========================================
 echo    CRIANDO INSTALADOR DO MEU FILHO
 echo ========================================
@@ -24,3 +25,4 @@ echo    - Permite escolher diretório de instalação
 echo.
 
 pause
+
