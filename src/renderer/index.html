@@ -7,18 +7,32 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="app-container">
-        <div class="header">
-            <div class="header-left">
-                <h1 class="app-title">Meu Filho</h1>
-            </div>
-            <div class="header-right">
-                <button id="add-account-btn" class="btn btn-primary">+ Adicionar Conta</button>
-            </div>
+    <!-- Tela de carregamento -->
+    <div id="loading-screen" class="loading-screen">
+        <div class="loading-content">
+            <h1>Meu Filho</h1>
+            <p>Carregando suas contas...</p>
         </div>
-        
-        <div class="avatar-tabs" id="avatar-tabs">
-            <!-- As abas de conta serão inseridas aqui dinamicamente -->
+    </div>
+
+    <!-- Layout principal -->
+    <div class="app-container">
+        <!-- Container unificado do topo -->
+        <div class="top-container">
+            <!-- Header -->
+            <div class="header">
+                <div class="header-left">
+                    <h1 class="app-title">Meu Filho</h1>
+                </div>
+                <div class="header-right">
+                    <button id="add-account-btn" class="btn btn-primary">+ Adicionar Conta</button>
+                </div>
+            </div>
+            
+            <!-- Abas de conta -->
+            <div id="avatar-tabs" class="avatar-tabs">
+                <!-- As abas de conta serão inseridas aqui dinamicamente -->
+            </div>
         </div>
     </div>
 
@@ -46,6 +60,42 @@
         <div class="context-menu-item" data-action="clear-session">Limpar Sessão</div>
         <div class="context-menu-item" data-action="reload">Recarregar</div>
         <div class="context-menu-item context-menu-item-danger" data-action="remove">Remover</div>
+    </div>
+
+    <!-- Aba dedicada para renomeação -->
+    <div id="rename-tab" class="rename-tab">
+        <div class="rename-tab-content">
+            <div class="rename-tab-header">
+                <h2>Renomear Conta</h2>
+                <button id="close-rename-tab" class="close-rename-btn">&times;</button>
+            </div>
+            <div class="rename-tab-body">
+                <label for="rename-account-name">Novo Nome da Conta:</label>
+                <input type="text" id="rename-account-name" placeholder="Digite o novo nome...">
+            </div>
+            <div class="rename-tab-footer">
+                <button id="cancel-rename-btn" class="btn btn-secondary">Cancelar</button>
+                <button id="confirm-rename-btn" class="btn btn-primary">Renomear</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Aba dedicada para adicionar conta -->
+    <div id="add-account-tab" class="add-account-tab">
+        <div class="add-account-tab-content">
+            <div class="add-account-tab-header">
+                <h2>Adicionar Nova Conta</h2>
+                <button id="close-add-account-tab" class="close-add-account-btn">&times;</button>
+            </div>
+            <div class="add-account-tab-body">
+                <label for="add-account-name">Nome da Conta:</label>
+                <input type="text" id="add-account-name" placeholder="Ex: Conta Principal">
+            </div>
+            <div class="add-account-tab-footer">
+                <button id="cancel-add-account-btn" class="btn btn-secondary">Cancelar</button>
+                <button id="confirm-add-account-btn" class="btn btn-primary">Adicionar</button>
+            </div>
+        </div>
     </div>
 
     <script src="renderer.js"></script>

@@ -6,22 +6,30 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --enable-logging",
-    "build": "electron-builder --win --publish never"
+    "build": "electron-builder --win --publish never",
+    "build:portable": "electron-builder --win portable --publish never",
+    "build:installer": "electron-builder --win nsis --publish never",
+    "build:single": "electron-builder --win nsis --publish never --config.win.target=nsis",
+    "build:publish": "electron-builder --win nsis --publish always",
+    "build:release": "electron-builder --win nsis --publish always"
   },
   "keywords": [
     "discord",
     "multi-account",
     "electron"
   ],
-  "author": "Manus",
+  "author": "Goukihh",
   "license": "MIT",
-  "dependencies": {},
+  "dependencies": {
+    "electron-updater": "^6.6.2",
+    "user-agents": "^1.1.667"
+  },
   "devDependencies": {
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1"
   },
   "build": {
-    "appId": "com.manus.meufilho",
+    "appId": "com.goukihh.meufilho",
     "productName": "Meu Filho",
     "directories": {
       "output": "dist"
@@ -30,9 +38,42 @@
       "src/**/*",
       "package.json"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "Goukihh",
+      "repo": "Meu-Filho-DonaGuimail"
+    },
     "win": {
-      "target": "nsis",
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Meu Filho",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "menuCategory": "Social",
+      "displayLanguageSelector": false,
+      "language": "1033"
     }
   }
 }

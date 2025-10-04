@@ -11,6 +11,61 @@ body {
     overflow: hidden;
 }
 
+/* Tela de carregamento falsa com fade out elegante */
+.loading-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url('../assets/Gragas_lol.png');
+    background-size: cover;
+    background-position: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    opacity: 1;
+    transition: opacity 2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.loading-screen.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.loading-content {
+    text-align: center;
+    color: #ffffff;
+    text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.9);
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.loading-content h2 {
+    font-size: 36px;
+    font-weight: 700;
+    margin-bottom: 20px;
+    letter-spacing: 1px;
+}
+
+.loading-content p {
+    font-size: 18px;
+    opacity: 0.9;
+    font-weight: 300;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.05);
+        opacity: 0.8;
+    }
+}
+
+
 .app-container {
     width: 100%;
     height: 100vh;
@@ -18,17 +73,23 @@ body {
     flex-direction: column;
 }
 
+/* Container unificado do topo */
+.top-container {
+    background: linear-gradient(to bottom, rgba(47, 49, 54, 0.9), rgba(47, 49, 54, 0.9)), url('../assets/gragas_header_bg.png');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    padding: 4px 16px;
+}
+
 /* Header */
 .header {
     height: 56px;
-    background: linear-gradient(to right, rgba(47, 49, 54, 0.95), rgba(47, 49, 54, 0.85)), url('../assets/gragas_header_bg.png');
-    background-size: cover;
-    background-position: center;
+    background: transparent;
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 0 16px;
-    border-bottom: 1px solid #202225;
     -webkit-app-region: drag;
 }
 
@@ -340,4 +401,328 @@ body {
 .context-menu-item-danger:hover {
     background-color: #f04747;
     color: #ffffff;
+}
+
+/* Estilos para o Container das Abas de Conta */
+#avatar-tabs {
+  display: flex;
+  align-items: center;
+  padding: 4px 16px;
+  height: 70px;
+  gap: 8px;
+  background: transparent;
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: none;
+}
+
+#avatar-tabs::-webkit-scrollbar {
+  height: 4px;
+}
+
+#avatar-tabs::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+#avatar-tabs::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+}
+
+/* Estilos para cada Aba de Conta */
+.avatar-tab {
+  width: 65px;
+  height: 55px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.avatar-circle {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background-color: #5865F2;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  border: 2px solid transparent;
+  transition: all 0.2s ease-in-out;
+  position: relative;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+}
+
+.avatar-tab:hover .avatar-circle {
+  border-radius: 12px;
+  transform: scale(1.08);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.avatar-tab.active .avatar-circle {
+  border-color: #ffffff;
+  box-shadow: 0 0 0 2px #ffffff, 0 2px 8px rgba(255, 255, 255, 0.3);
+}
+
+.account-name {
+  margin-top: 1px;
+  font-size: 10px;
+  color: #b9bbbe;
+  max-width: 55px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-weight: 600;
+}
+
+.avatar-tab.active .account-name {
+  color: #ffffff;
+  font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.status-indicator {
+  position: absolute;
+  top: 30px;
+  right: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid #2f3136;
+  background-color: #43b581;
+  transition: all 0.2s ease-in-out;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.status-indicator.loading {
+  background-color: #faa61a;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.avatar-tab.active .status-indicator {
+  border-color: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 1px #ffffff;
+}
+
+.status-indicator.error {
+  background-color: #f04747;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Aba dedicada para renomeação */
+.rename-tab {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.rename-tab.show {
+  display: flex;
+}
+
+.rename-tab-content {
+  background: #2f3136;
+  border-radius: 8px;
+  padding: 24px;
+  width: 400px;
+  max-width: 90%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  border: 1px solid #40444b;
+}
+
+.rename-tab-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.rename-tab-header h2 {
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.close-rename-btn {
+  background: none;
+  border: none;
+  color: #b9bbbe;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.close-rename-btn:hover {
+  background: #40444b;
+  color: #ffffff;
+}
+
+.rename-tab-body {
+  margin-bottom: 20px;
+}
+
+.rename-tab-body label {
+  display: block;
+  color: #b9bbbe;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.rename-tab-body input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #40444b;
+  border-radius: 4px;
+  background: #40444b;
+  color: #ffffff;
+  font-size: 14px;
+  transition: border-color 0.2s ease;
+}
+
+.rename-tab-body input:focus {
+  outline: none;
+  border-color: #5865f2;
+}
+
+.rename-tab-footer {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+/* Aba dedicada para adicionar conta */
+.add-account-tab {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.add-account-tab.show {
+  display: flex;
+}
+
+.add-account-tab-content {
+  background: #2f3136;
+  border-radius: 8px;
+  padding: 24px;
+  width: 400px;
+  max-width: 90%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  border: 1px solid #40444b;
+}
+
+.add-account-tab-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.add-account-tab-header h2 {
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.close-add-account-btn {
+  background: none;
+  border: none;
+  color: #b9bbbe;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.close-add-account-btn:hover {
+  background: #40444b;
+  color: #ffffff;
+}
+
+.add-account-tab-body {
+  margin-bottom: 20px;
+}
+
+.add-account-tab-body label {
+  display: block;
+  color: #b9bbbe;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.add-account-tab-body input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #40444b;
+  border-radius: 4px;
+  background: #40444b;
+  color: #ffffff;
+  font-size: 14px;
+  transition: border-color 0.2s ease;
+}
+
+.add-account-tab-body input:focus {
+  outline: none;
+  border-color: #5865f2;
+}
+
+.add-account-tab-footer {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+/* Layout Principal */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.header {
+  height: 56px;
+  flex-shrink: 0; /* Impede que o header seja espremido */
+}
+
+#avatar-tabs {
+  height: 60px;
+  flex-shrink: 0; /* Impede que a barra de abas seja espremida */
 }
