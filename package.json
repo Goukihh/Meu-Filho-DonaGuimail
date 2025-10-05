@@ -1,6 +1,6 @@
 {
   "name": "meu-filho",
-  "version": "1.1.1",
+  "version": "1.1.5",
   "description": "Um cliente Discord para múltiplas contas com mascaramento avançado de navegador.",
   "main": "src/main.js",
   "scripts": {
@@ -58,7 +58,7 @@
       "menuCategory": "Social",
       "displayLanguageSelector": false,
       "language": "1033",
-      "artifactName": "Meu Filho Setup ${version}.exe"
+      "artifactName": "Meu Filho Setup 1.1.5.exe"
     }
   }
 }
