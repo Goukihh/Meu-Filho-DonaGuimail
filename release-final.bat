@@ -25,8 +25,8 @@ pause
 
 echo.
 echo [GIT] Fazendo commit das mudancas...
-git add package.json
-git commit -m "Bump version to %VERSION%"
+git add .
+git commit -m "Release v%VERSION% - Barra de título personalizada e melhorias no layout"
 if %errorlevel% neq 0 (
     echo [ERROR] Falha ao fazer commit
     echo [INFO] Pressione qualquer tecla para sair...

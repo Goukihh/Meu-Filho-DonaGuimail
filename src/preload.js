@@ -9,5 +9,12 @@ contextBridge.exposeInMainWorld('electron', {
       // Deliberadamente não removemos o listener para permitir múltiplas atualizações
       ipcRenderer.on(channel, (event, ...args) => func(...args));
     }
+  },
+  // Métodos para controles da janela personalizada
+  window: {
+    minimize: () => ipcRenderer.invoke('window-minimize'),
+    maximize: () => ipcRenderer.invoke('window-maximize'),
+    close: () => ipcRenderer.invoke('window-close'),
+    isMaximized: () => ipcRenderer.invoke('window-is-maximized')
   }
 });

@@ -69,6 +69,8 @@ function createWindow() {
     height: 900,
     minWidth: 1000,
     minHeight: 600,
+    frame: false, // Remove a barra de título padrão
+    titleBarStyle: 'hidden', // Esconde a barra de título no Windows
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -93,6 +95,33 @@ function createWindow() {
     updateBrowserViewBounds();
   });
 }
+
+// Handlers para controles da janela personalizada
+ipcMain.handle('window-minimize', () => {
+  if (mainWindow) {
+    mainWindow.minimize();
+  }
+});
+
+ipcMain.handle('window-maximize', () => {
+  if (mainWindow) {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
+  }
+});
+
+ipcMain.handle('window-close', () => {
+  if (mainWindow) {
+    mainWindow.close();
+  }
+});
+
+ipcMain.handle('window-is-maximized', () => {
+  return mainWindow ? mainWindow.isMaximized() : false;
+});
 
 // Inicializar sessão para uma conta com mascaramento avançado
 async function initializeSessionForAccount(account) {
@@ -396,6 +425,9 @@ function createBrowserView(accountId) {
   view.webContents.on('did-finish-load', () => {
     console.log(`Discord carregado para ${accountId}`);
     
+    // Enviar evento para remover loading
+    mainWindow.webContents.send('view-loaded');
+    
     // Só tornar visível se o sinal estiver verde (nenhum modal aberto)
     if (!isModalOpen) {
       console.log(`🚦 Sinal verde: Tornando BrowserView visível para ${accountId}`);
@@ -499,7 +531,7 @@ function updateBrowserViewBounds() {
   
   console.log('🚦 Sinal verde: Tornando BrowserView visível');
   const contentBounds = mainWindow.getContentBounds();
-  const topOffset = 131; // 56px cabeçalho + 50px abas + 10px espaçamento + 15px ajuste
+  const topOffset = 158; // 32px barra título + 25px header + 75px abas + 26px ajuste (8px abaixo da linha laranja)
 
   currentView.setBounds({
     x: 0,
@@ -934,6 +966,7 @@ app.whenReady().then(async () => {
     }
   });
 });
+
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

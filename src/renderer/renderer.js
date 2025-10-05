@@ -3,6 +3,10 @@ let currentContextMenuAccountId = null;
 let modalMode = 'add'; // 'add' ou 'edit'
 let editingAccountId = null;
 
+// Sistema de paginação
+let currentPage = 0;
+const ACCOUNTS_PER_PAGE = 20;
+
 // Elementos DOM
 const avatarTabsContainer = document.getElementById('avatar-tabs');
 const addAccountBtn = document.getElementById('add-account-btn');
@@ -13,9 +17,62 @@ const cancelAddBtn = document.getElementById('cancel-add-btn');
 const closeModalBtn = document.querySelector('.close');
 const contextMenu = document.getElementById('context-menu');
 
+// Elementos de paginação
+const prevPageBtn = document.getElementById('prev-page-btn');
+const nextPageBtn = document.getElementById('next-page-btn');
+
+// Inicializar controles da barra de título
+function initTitleBar() {
+    const minimizeBtn = document.getElementById('minimize-btn');
+    const maximizeBtn = document.getElementById('maximize-btn');
+    const closeBtn = document.getElementById('close-btn');
+
+    if (minimizeBtn) {
+        minimizeBtn.addEventListener('click', async () => {
+            await window.electron.window.minimize();
+        });
+    }
+
+    if (maximizeBtn) {
+        maximizeBtn.addEventListener('click', async () => {
+            await window.electron.window.maximize();
+        });
+    }
+
+    if (closeBtn) {
+        closeBtn.addEventListener('click', async () => {
+            await window.electron.window.close();
+        });
+    }
+
+    // Atualizar ícone do botão maximizar baseado no estado da janela
+    const updateMaximizeIcon = async () => {
+        if (maximizeBtn) {
+            const isMaximized = await window.electron.window.isMaximized();
+            const svg = maximizeBtn.querySelector('svg');
+            if (svg) {
+                if (isMaximized) {
+                    // Ícone de restaurar (dois quadrados sobrepostos)
+                    svg.innerHTML = '<rect x="2" y="2" width="4" height="4" stroke="currentColor" stroke-width="1" fill="none"/><rect x="4" y="4" width="4" height="4" stroke="currentColor" stroke-width="1" fill="none"/>';
+                } else {
+                    // Ícone de maximizar (quadrado simples)
+                    svg.innerHTML = '<rect x="2" y="2" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none"/>';
+                }
+            }
+        }
+    };
+
+    // Atualizar ícone quando a janela mudar de estado
+    window.addEventListener('resize', updateMaximizeIcon);
+    updateMaximizeIcon();
+}
+
 // Inicializar
 async function init() {
     console.log('🚀 Iniciando aplicação...');
+    
+    // Inicializar barra de título personalizada
+    initTitleBar();
     
     // Carregar contas primeiro (sequencial)
     console.log('📖 Carregando contas...');
@@ -28,6 +85,10 @@ async function init() {
         if (loadingScreen) {
             loadingScreen.classList.add('hidden');
             console.log('✅ Tela de carregamento removida');
+            // Som de inicialização elegante
+            if (window.audioManager) {
+                window.audioManager.playSuccess();
+            }
         }
         console.log('🎨 Renderizando contas após loading...');
         // Garantir que as contas sejam exibidas após o loading terminar
@@ -35,18 +96,21 @@ async function init() {
         console.log('✅ Contas renderizadas com sucesso');
     }, 3000);
     
-    // Trocar para a conta ativa
-    const activeAccount = accounts.find(acc => acc.active);
-    if (activeAccount) {
-        await window.electron.invoke('switch-account', activeAccount.id);
-    }
+    // Listener para remover loading quando view carregar
+    window.electron.on('view-loaded', () => {
+        console.log('✅ BrowserView carregada - removendo loading');
+        const loadingTabs = document.querySelectorAll('.avatar-tab.loading');
+        loadingTabs.forEach(tab => tab.classList.remove('loading'));
+    });
 }
 
-// Renderizar contas
+
+// Renderizar contas com paginação
 function renderAccounts() {
     try {
         console.log('🎨 Função renderAccounts iniciada');
         console.log('📋 Contas para renderizar:', accounts.length);
+        console.log('📄 Página atual:', currentPage);
         
         if (!avatarTabsContainer) {
             console.error('❌ Container de abas não encontrado');
@@ -59,11 +123,22 @@ function renderAccounts() {
         
         if (accounts.length === 0) {
             console.log('⚠️ Nenhuma conta para renderizar');
+            updateNavigationButtons();
             return;
         }
         
-        accounts.forEach((account, index) => {
-            console.log(`🔧 Criando aba ${index + 1}/${accounts.length} para: ${account.name}`);
+        // Calcular índices da página atual
+        const startIndex = currentPage * ACCOUNTS_PER_PAGE;
+        const endIndex = Math.min(startIndex + ACCOUNTS_PER_PAGE, accounts.length);
+        const accountsToShow = accounts.slice(startIndex, endIndex);
+        
+        console.log(`📊 Mostrando contas ${startIndex + 1}-${endIndex} de ${accounts.length}`);
+        
+        // Atualizar estado dos botões de navegação
+        updateNavigationButtons();
+        
+        accountsToShow.forEach((account, index) => {
+            console.log(`🔧 Criando aba ${index + 1}/${accountsToShow.length} para: ${account.name}`);
             const tabElement = createAccountTab(account);
             if (tabElement) {
                 avatarTabsContainer.appendChild(tabElement);
@@ -76,6 +151,52 @@ function renderAccounts() {
         console.log(`✅ Renderização concluída: ${avatarTabsContainer.children.length} abas criadas`);
     } catch (error) {
         console.error('❌ Erro na renderização de contas:', error);
+    }
+}
+
+// Atualizar estado dos botões de navegação
+function updateNavigationButtons() {
+    const totalPages = Math.ceil(accounts.length / ACCOUNTS_PER_PAGE);
+    
+    if (prevPageBtn) {
+        prevPageBtn.disabled = currentPage === 0;
+        console.log(`⬅️ Botão anterior: ${prevPageBtn.disabled ? 'desabilitado' : 'habilitado'}`);
+    }
+    
+    if (nextPageBtn) {
+        nextPageBtn.disabled = currentPage >= totalPages - 1;
+        console.log(`➡️ Botão próximo: ${nextPageBtn.disabled ? 'desabilitado' : 'habilitado'}`);
+    }
+}
+
+// Navegar para página anterior
+function goToPreviousPage() {
+    if (currentPage > 0) {
+        currentPage--;
+        console.log(`⬅️ Navegando para página ${currentPage}`);
+        
+        // Som de transição
+        if (window.audioManager) {
+            window.audioManager.playTransition();
+        }
+        
+        renderAccounts();
+    }
+}
+
+// Navegar para próxima página
+function goToNextPage() {
+    const totalPages = Math.ceil(accounts.length / ACCOUNTS_PER_PAGE);
+    if (currentPage < totalPages - 1) {
+        currentPage++;
+        console.log(`➡️ Navegando para página ${currentPage}`);
+        
+        // Som de transição
+        if (window.audioManager) {
+            window.audioManager.playTransition();
+        }
+        
+        renderAccounts();
     }
 }
 
@@ -133,8 +254,25 @@ function createAccountTab(account) {
         tab.appendChild(statusIndicator);
         
         // Event listeners
-        tab.addEventListener('click', () => handleAccountClick(account.id));
+        tab.addEventListener('click', () => {
+            // Som de transição elegante
+            if (window.audioManager) {
+                window.audioManager.playTransition();
+            }
+            
+            // Adicionar classe loading
+            tab.classList.add('loading');
+            
+            handleAccountClick(account.id);
+        });
         tab.addEventListener('contextmenu', (e) => handleAccountContextMenu(e, account.id));
+        
+        // Som de hover elegante
+        tab.addEventListener('mouseenter', () => {
+            if (window.audioManager) {
+                window.audioManager.playHover();
+            }
+        });
         
         console.log(`✅ Aba criada com sucesso para: ${account.name}`);
         return tab;
@@ -172,6 +310,11 @@ function handleAccountContextMenu(e, accountId) {
 addAccountBtn.addEventListener('click', () => {
     console.log(`➕ Iniciando adição de nova conta`);
     
+    // Som de clique elegante
+    if (window.audioManager) {
+        window.audioManager.playClick();
+    }
+    
     // FECHAR COMPLETAMENTE a BrowserView para evitar sobreposição
     console.log(`➕ Fechando BrowserView para adição de nova conta`);
     window.electron.send('close-browser-view-for-add');
@@ -198,6 +341,11 @@ addAccountBtn.addEventListener('click', () => {
 
 // Confirmar ação do modal
 confirmAddBtn.addEventListener('click', async () => {
+    // Som de clique elegante
+    if (window.audioManager) {
+        window.audioManager.playClick();
+    }
+    
     const accountName = accountNameInput.value.trim();
     if (!accountName) {
         alert('Por favor, insira um nome para a conta.');
@@ -208,6 +356,12 @@ confirmAddBtn.addEventListener('click', async () => {
         // Modo adicionar - criar nova conta
         console.log(`➕ Criando nova conta: ${accountName}`);
         accounts = await window.electron.invoke('add-account', { name: accountName });
+        
+        // Som de sucesso elegante
+        if (window.audioManager) {
+            window.audioManager.playSuccess();
+        }
+        
         renderAccounts();
         addAccountModal.classList.remove('show');
         window.electron.send('show-browser-view');
@@ -522,5 +676,16 @@ function restoreAddAccountModal() {
     setupModalForAdd();
 }
 
-// Inicializar aplicativo
-init();
+    // Event listeners para navegação
+    if (prevPageBtn) {
+        prevPageBtn.addEventListener('click', goToPreviousPage);
+        console.log('⬅️ Event listener do botão anterior adicionado');
+    }
+    
+    if (nextPageBtn) {
+        nextPageBtn.addEventListener('click', goToNextPage);
+        console.log('➡️ Event listener do botão próximo adicionado');
+    }
+
+    // Inicializar aplicativo
+    init();

@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
 echo ========================================
-echo    CRIANDO INSTALADOR DO MEU FILHO
+echo    DESENVOLVIMENTO - MEU FILHO
 echo ========================================
 echo.
 
@@ -9,19 +9,15 @@ echo [INFO] Instalando dependencias...
 call npm install
 
 echo.
-echo [BUILD] Criando instalador...
-call npm run build:single
-
-echo.
-echo [SUCCESS] Instalador criado com sucesso!
-echo [LOCATION] Localizacao: dist\Meu Filho Setup 1.0.0.exe
+echo [DEV] Iniciando modo desenvolvimento...
+echo [INFO] O app vai abrir automaticamente
+echo [INFO] Pressione Ctrl+C para parar
 echo.
 
-echo [FEATURES] O instalador:
-echo    - Salva dados permanentemente
-echo    - Nao deleta dados ao desinstalar
-echo    - Cria atalhos no desktop e menu iniciar
-echo    - Permite escolher diretorio de instalacao
+call npm start
+
+echo.
+echo [INFO] Desenvolvimento finalizado
 echo.
 
 pause

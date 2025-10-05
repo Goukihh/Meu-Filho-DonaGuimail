@@ -1,14 +1,139 @@
+/* ===== GRAGAS SUNSET THEME ===== */
+/* Tema elegante e poderoso inspirado no pôr do sol de batalha */
+
 * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
 }
 
+:root {
+    /* Paleta Gragas Sunset - Inspirada na barba e cabelo do Gragas */
+    --gragas-orange: #FF6B35;        /* Laranja vibrante do cabelo */
+    --gragas-red: #D2691E;           /* Vermelho terroso da barba */
+    --gragas-gold: #FF8C00;          /* Dourado das sombras */
+    --gragas-warm: #FF7F50;          /* Coral quente */
+    --gragas-deep: #8B4513;          /* Marrom profundo */
+    
+    /* Gradiente Sunset Harmonioso */
+    --sunset-gradient: linear-gradient(135deg, #FF6B35 0%, #D2691E 50%, #8B4513 100%);
+    --sunset-glow: linear-gradient(45deg, #FF6B35, #FF8C00, #D2691E);
+    
+    /* Cores de fundo */
+    --bg-charcoal: #1a1a1a;
+    --bg-dark: #202225;
+    --bg-darker: #18191c;
+    
+    /* Sombras energizadas - Mais suaves */
+    --energy-shadow: 0 0 25px rgba(255, 107, 53, 0.3);
+    --energy-glow: 0 0 40px rgba(255, 107, 53, 0.5), 0 0 80px rgba(255, 107, 53, 0.2);
+}
+
+html, body {
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    background-color: #202225;
-    color: #dcddde;
+    background-color: var(--bg-charcoal);
+    color: #ffffff;
+    position: relative;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    margin: 0;
+    padding: 0;
     overflow: hidden;
+}
+
+/* Barra de título personalizada - Tema Gragas Sunset */
+.custom-title-bar {
+    height: 32px;
+    background: linear-gradient(135deg, #8B4513 0%, #D2691E 50%, #FF6B35 100%);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 8px;
+    -webkit-app-region: drag;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 10000;
+    border-bottom: 2px solid var(--gragas-orange);
+}
+
+.title-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    -webkit-app-region: no-drag;
+}
+
+.app-icon {
+    font-size: 16px;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
+}
+
+.app-title-text {
+    font-size: 14px;
+    font-weight: 600;
+    color: #ffffff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    letter-spacing: 0.5px;
+}
+
+.title-bar-right {
+    display: flex;
+    gap: 2px;
+    -webkit-app-region: no-drag;
+}
+
+.title-bar-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    color: #ffffff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.title-bar-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.title-bar-btn:active {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.title-bar-btn svg {
+    width: 12px;
+    height: 12px;
+    fill: currentColor;
+}
+
+.close-btn:hover {
+    background: #e74c3c;
+    color: #ffffff;
+}
+
+.close-btn:active {
+    background: #c0392b;
+}
+
+.maximize-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.minimize-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
 }
 
 /* Tela de carregamento falsa com fade out elegante */
@@ -68,18 +193,59 @@ body {
 
 .app-container {
     width: 100%;
-    height: 100vh;
+    height: 100%;
     display: flex;
     flex-direction: column;
+    margin-top: 32px; /* Espaço para a barra de título */
 }
 
-/* Container unificado do topo */
+/* Container unificado do topo - Transição harmoniosa com Gragas */
 .top-container {
-    background: linear-gradient(to bottom, rgba(47, 49, 54, 0.9), rgba(47, 49, 54, 0.9)), url('../assets/gragas_header_bg.png');
+    background: 
+        linear-gradient(to bottom, 
+            rgba(26, 26, 26, 0.95) 0%, 
+            rgba(26, 26, 26, 0.8) 30%, 
+            rgba(26, 26, 26, 0.4) 70%, 
+            transparent 100%
+        ),
+        url('../assets/gragas_header_bg.png');
     background-size: cover;
     background-position: center;
     background-repeat: no-repeat;
-    padding: 4px 16px;
+    padding: 8px 16px;
+    position: relative;
+    overflow: visible;
+}
+
+/* Efeito de energia sutil no topo */
+.top-container::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--sunset-gradient);
+    opacity: 0.8;
+    animation: energyFlow 3s ease-in-out infinite;
+}
+
+/* Efeito de partículas sutis no fundo */
+.top-container::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: radial-gradient(circle at 20% 20%, rgba(255, 107, 53, 0.05) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(210, 105, 30, 0.05) 0%, transparent 50%);
+    pointer-events: none;
+}
+
+@keyframes energyFlow {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
 }
 
 /* Header */
@@ -99,9 +265,11 @@ body {
 }
 
 .app-title {
-    font-size: 16px;
-    font-weight: 600;
+    font-size: 18px;
+    font-weight: 700;
     color: #ffffff;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+    letter-spacing: 0.5px;
 }
 
 .header-right {
@@ -110,78 +278,152 @@ body {
     -webkit-app-region: no-drag;
 }
 
-/* Buttons */
+/* Botões com tema Gragas Sunset */
 .btn {
-    padding: 8px 16px;
+    padding: 10px 20px;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     font-size: 14px;
-    font-weight: 500;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s;
+}
+
+.btn:hover::before {
+    left: 100%;
 }
 
 .btn-primary {
-    background-color: #5865f2;
+    background: var(--sunset-gradient);
     color: #ffffff;
+    box-shadow: var(--energy-shadow);
 }
 
 .btn-primary:hover {
-    background-color: #4752c4;
+    transform: translateY(-2px);
+    box-shadow: var(--energy-glow);
+    filter: brightness(1.1);
 }
 
 .btn-secondary {
-    background-color: #4e5058;
+    background: linear-gradient(135deg, #4e5058, #5d5f69);
     color: #ffffff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .btn-secondary:hover {
-    background-color: #5d5f69;
+    background: linear-gradient(135deg, #5d5f69, #6a6d75);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
-/* Avatar Tabs */
+/* Avatar Tabs - Transparente para mostrar Gragas */
 .avatar-tabs {
     min-height: 68px;
-    background-color: #2f3136;
+    background: transparent;
     display: flex;
     align-items: center;
-    padding: 8px 16px;
+    padding: 4px 0;
     gap: 12px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    border-bottom: 1px solid #202225;
+    overflow: visible;
+    flex: 1;
+    justify-content: center;
 }
 
-.avatar-tabs::-webkit-scrollbar {
-    height: 6px;
+
+/* Container das abas com setas de navegação */
+.avatar-tabs-container {
+    display: flex;
+    align-items: center;
+    background: transparent;
+    border-bottom: 2px solid var(--gragas-orange);
+    position: relative;
+    margin-bottom: 0;
+    justify-content: center;
+    overflow: visible;
+    padding: 8px 0; /* Mais padding para evitar sobreposição */
+    z-index: 5;
 }
 
-.avatar-tabs::-webkit-scrollbar-track {
-    background: #202225;
+/* Setas de navegação */
+.nav-arrow {
+    background: var(--sunset-gradient);
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);
+    z-index: 10;
+    margin: 0 12px;
+    flex-shrink: 0;
 }
 
-.avatar-tabs::-webkit-scrollbar-thumb {
-    background: #4e5058;
-    border-radius: 3px;
+.nav-arrow:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 20px rgba(255, 107, 53, 0.5);
 }
 
-.avatar-tabs::-webkit-scrollbar-thumb:hover {
-    background: #5d5f69;
+.nav-arrow:active {
+    transform: scale(0.95);
 }
 
-/* Avatar Tab Item */
+.nav-arrow svg {
+    width: 20px;
+    height: 20px;
+    fill: #ffffff;
+}
+
+.nav-arrow:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.nav-arrow:disabled:hover {
+    transform: none;
+    box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);
+}
+
+/* Avatar Tab Item com energia Sunset */
 .avatar-tab {
     position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     flex-shrink: 0;
+    z-index: 5;
+}
+
+.avatar-tab:hover {
+    transform: translateY(-2px) scale(1.05);
 }
 
 .avatar-tab:hover .avatar-wrapper {
-    border-color: #5865f2;
+    border-color: var(--gragas-orange);
+    box-shadow: var(--energy-shadow);
+    transform: scale(1.05);
 }
 
 .avatar-wrapper {
@@ -190,16 +432,19 @@ body {
     border-radius: 50%;
     border: 3px solid transparent;
     overflow: hidden;
-    transition: all 0.2s;
-    background-color: #5865f2;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    background: linear-gradient(135deg, #5865f2, #7289da);
     display: flex;
     align-items: center;
     justify-content: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .avatar-tab.active .avatar-wrapper {
-    border-color: #5865f2;
-    box-shadow: 0 0 0 2px #5865f2;
+    border-color: var(--gragas-orange);
+    box-shadow: var(--energy-glow);
+    transform: scale(1.1);
+    background: var(--sunset-gradient);
 }
 
 .avatar-img {
@@ -229,11 +474,13 @@ body {
     text-overflow: ellipsis;
     white-space: nowrap;
     text-align: center;
+    transition: all 0.3s;
 }
 
 .avatar-tab.active .avatar-name {
     color: #ffffff;
     font-weight: 600;
+    text-shadow: 0 0 8px var(--gragas-orange);
 }
 
 .avatar-status {
@@ -243,16 +490,26 @@ body {
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    border: 3px solid #2f3136;
+    border: 3px solid var(--bg-darker);
     background-color: #43b581;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s;
 }
 
 .avatar-status.loading {
-    background-color: #faa61a;
+    background: var(--sunset-gradient);
+    box-shadow: var(--energy-shadow);
+    animation: statusPulse 1.5s ease-in-out infinite;
 }
 
 .avatar-status.error {
     background-color: #f04747;
+    box-shadow: 0 0 10px rgba(240, 71, 71, 0.5);
+}
+
+@keyframes statusPulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.2); }
 }
 
 /* Modal */
@@ -386,12 +643,22 @@ body {
     font-size: 14px;
     color: #dcddde;
     cursor: pointer;
-    transition: all 0.1s;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .context-menu-item:hover {
     background-color: #5865f2;
     color: #ffffff;
+    transform: translateX(4px);
+}
+
+.context-menu-item svg {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
 }
 
 .context-menu-item-danger {
@@ -403,75 +670,114 @@ body {
     color: #ffffff;
 }
 
-/* Estilos para o Container das Abas de Conta */
+/* Estilos para o Container das Abas de Conta - Transparente para Gragas */
 #avatar-tabs {
   display: flex;
   align-items: center;
   padding: 4px 16px;
-  height: 70px;
+  padding-top: 27px; /* Mais espaço para evitar sobreposição */
+  padding-bottom: 18px; /* Mais espaço na parte inferior para empurrar nomes para cima */
+  height: 75px; /* Altura aumentada */
   gap: 8px;
   background: transparent;
   flex-shrink: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  border-bottom: none;
+  overflow: hidden;
 }
 
-#avatar-tabs::-webkit-scrollbar {
-  height: 4px;
-}
 
-#avatar-tabs::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-}
-
-#avatar-tabs::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.3);
-  border-radius: 2px;
-}
-
-/* Estilos para cada Aba de Conta */
+/* Estilos para cada Aba de Conta - Energia Sunset */
 .avatar-tab {
-  width: 65px;
-  height: 55px;
+  width: 75px;
+  height: 65px;
   display: flex;
   flex-direction: column;
   align-items: center;
   cursor: pointer;
-  transition: all 0.2s ease-in-out;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   flex-shrink: 0;
   position: relative;
 }
 
+.avatar-tab:hover {
+  transform: translateY(-2px);
+}
+
 .avatar-circle {
-  width: 44px;
-  height: 44px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
-  background-color: #5865F2;
+  background: linear-gradient(135deg, #5865F2, #7289da);
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
   border: 2px solid transparent;
-  transition: all 0.2s ease-in-out;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   image-rendering: -webkit-optimize-contrast;
   image-rendering: crisp-edges;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .avatar-tab:hover .avatar-circle {
   border-radius: 12px;
-  transform: scale(1.08);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transform: scale(1.05);
+  box-shadow: var(--energy-shadow);
+  border-color: var(--gragas-orange);
+  filter: brightness(1.1);
 }
 
 .avatar-tab.active .avatar-circle {
-  border-color: #ffffff;
-  box-shadow: 0 0 0 2px #ffffff, 0 2px 8px rgba(255, 255, 255, 0.3);
+  border-color: var(--gragas-orange);
+  box-shadow: 0 0 0 2px var(--gragas-orange), 0 0 15px rgba(255, 107, 53, 0.5);
+  transform: scale(1.1);
+}
+
+/* Animação de loading para troca de conta */
+.avatar-tab.loading .avatar-circle {
+  position: relative;
+  animation: loadingPulse 1.5s ease-in-out infinite;
+}
+
+.avatar-tab.loading .avatar-circle::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  right: -4px;
+  bottom: -4px;
+  border: 3px solid transparent;
+  border-top: 3px solid var(--gragas-orange);
+  border-radius: 50%;
+  animation: loadingSpin 1s linear infinite;
+}
+
+@keyframes loadingPulse {
+  0%, 100% { 
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% { 
+    opacity: 0.7;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes loadingSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Animação de clique */
+.avatar-tab:active {
+  transform: scale(0.95);
+}
+
+.avatar-tab:active .avatar-circle {
+  transform: scale(0.95);
 }
 
 .account-name {
-  margin-top: 1px;
+  margin-top: 4px; /* Aumentado de 1px para 4px para criar mais espaço do ícone */
   font-size: 10px;
   color: #b9bbbe;
   max-width: 55px;
@@ -480,12 +786,13 @@ body {
   white-space: nowrap;
   text-align: center;
   font-weight: 600;
+  transition: all 0.3s;
 }
 
 .avatar-tab.active .account-name {
   color: #ffffff;
   font-weight: 600;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 0 8px var(--gragas-orange);
 }
 
 .status-indicator {
@@ -495,25 +802,31 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  border: 2px solid #2f3136;
+  border: 2px solid var(--bg-darker);
   background-color: #43b581;
-  transition: all 0.2s ease-in-out;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 .status-indicator.loading {
-  background-color: #faa61a;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  background: var(--sunset-gradient);
+  box-shadow: var(--energy-shadow);
+  animation: statusPulse 1.5s ease-in-out infinite;
 }
 
 .avatar-tab.active .status-indicator {
-  border-color: #ffffff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 1px #ffffff;
+  border-color: var(--gragas-orange);
+  box-shadow: var(--energy-glow);
 }
 
 .status-indicator.error {
   background-color: #f04747;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 10px rgba(240, 71, 71, 0.5);
+}
+
+@keyframes statusPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.2); }
 }
 
 /* Aba dedicada para renomeação */
@@ -710,19 +1023,12 @@ body {
   justify-content: flex-end;
 }
 
-/* Layout Principal */
-.app-container {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-}
 
 .header {
-  height: 56px;
-  flex-shrink: 0; /* Impede que o header seja espremido */
-}
-
-#avatar-tabs {
-  height: 60px;
-  flex-shrink: 0; /* Impede que a barra de abas seja espremida */
+    height: 25px;
+    flex-shrink: 0; /* Impede que o header seja espremido */
+    overflow: visible;
+    position: relative;
+    z-index: 10;
+    padding-top: 8px; /* Espaço adicional no topo */
 }

@@ -2,11 +2,9 @@
 /node_modules
 
 # Arquivos de Build
-/dist/
-/build/
+/dist
+/build
 *.exe
-*.blockmap
-*.yml
 
 # Logs
 npm-debug.log*
