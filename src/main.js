@@ -922,8 +922,14 @@ ipcMain.on('profile-picture-updated', (event, accountId, avatarUrl) => {
   }
 });
 
-// Configurar auto-updater
-autoUpdater.checkForUpdatesAndNotify();
+// Configurar auto-updater após a janela estar pronta
+mainWindow.once('ready-to-show', () => {
+  // Aguardar um pouco antes de verificar atualizações
+  setTimeout(() => {
+    console.log('🔄 Iniciando verificação de atualizações...');
+    autoUpdater.checkForUpdatesAndNotify();
+  }, 3000);
+});
 
 // Eventos do auto-updater para logging
 autoUpdater.on('checking-for-update', () => {
@@ -932,6 +938,16 @@ autoUpdater.on('checking-for-update', () => {
 
 autoUpdater.on('update-available', (info) => {
   console.log('📦 Atualização disponível:', info.version);
+  
+  // Notificar o usuário sobre a atualização
+  const { dialog } = require('electron');
+  dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: 'Atualização Disponível',
+    message: `Uma nova versão (${info.version}) está disponível!`,
+    detail: 'A atualização será baixada automaticamente em segundo plano.',
+    buttons: ['OK']
+  });
 });
 
 autoUpdater.on('update-not-available', (info) => {
@@ -951,8 +967,21 @@ autoUpdater.on('download-progress', (progressObj) => {
 
 autoUpdater.on('update-downloaded', (info) => {
   console.log('✅ Atualização baixada:', info.version);
-  console.log('🔄 Reiniciando aplicativo para aplicar atualização...');
-  autoUpdater.quitAndInstall();
+  
+  // Notificar o usuário que a atualização foi baixada
+  const { dialog } = require('electron');
+  dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: 'Atualização Pronta',
+    message: `A versão ${info.version} foi baixada com sucesso!`,
+    detail: 'O aplicativo será reiniciado para aplicar a atualização.',
+    buttons: ['Reiniciar Agora', 'Mais Tarde']
+  }).then((result) => {
+    if (result.response === 0) {
+      console.log('🔄 Reiniciando aplicativo para aplicar atualização...');
+      autoUpdater.quitAndInstall();
+    }
+  });
 });
 
 // Eventos do app
