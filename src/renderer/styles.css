@@ -696,6 +696,7 @@ body {
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   flex-shrink: 0;
   position: relative;
+  min-width: 60px; /* Largura mínima para telas pequenas */
 }
 
 .avatar-tab:hover {
@@ -1021,6 +1022,47 @@ body {
   display: flex;
   gap: 12px;
   justify-content: flex-end;
+}
+
+/* Media queries para telas menores */
+@media (max-width: 1400px) {
+  .avatar-tab {
+    width: 70px;
+    min-width: 55px;
+  }
+  
+  .avatar-circle {
+    width: 48px;
+    height: 48px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .avatar-tab {
+    width: 65px;
+    min-width: 50px;
+  }
+  
+  .avatar-circle {
+    width: 45px;
+    height: 45px;
+  }
+}
+
+@media (max-width: 1000px) {
+  .avatar-tab {
+    width: 60px;
+    min-width: 45px;
+  }
+  
+  .avatar-circle {
+    width: 42px;
+    height: 42px;
+  }
+  
+  .account-name {
+    font-size: 9px;
+  }
 }
 
 

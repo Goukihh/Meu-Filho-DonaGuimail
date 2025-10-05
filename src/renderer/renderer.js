@@ -3,9 +3,9 @@ let currentContextMenuAccountId = null;
 let modalMode = 'add'; // 'add' ou 'edit'
 let editingAccountId = null;
 
-// Sistema de paginação
+// Sistema de paginação responsivo
 let currentPage = 0;
-const ACCOUNTS_PER_PAGE = 20;
+let ACCOUNTS_PER_PAGE = 20; // Será ajustado dinamicamente baseado na resolução
 
 // Elementos DOM
 const avatarTabsContainer = document.getElementById('avatar-tabs');
@@ -65,11 +65,37 @@ function initTitleBar() {
     // Atualizar ícone quando a janela mudar de estado
     window.addEventListener('resize', updateMaximizeIcon);
     updateMaximizeIcon();
+    
+    // Recalcular contas por página quando a janela for redimensionada
+    window.addEventListener('resize', () => {
+        calculateAccountsPerPage();
+        currentPage = 0; // Voltar para primeira página
+        renderAccounts();
+    });
+}
+
+// Calcular número de contas por página baseado na resolução
+function calculateAccountsPerPage() {
+    const screenWidth = window.innerWidth;
+    const tabWidth = 75; // Largura de cada aba
+    const padding = 32; // Padding lateral
+    const navArrows = 80; // Espaço para setas de navegação
+    
+    const availableWidth = screenWidth - padding - navArrows;
+    const maxTabs = Math.floor(availableWidth / tabWidth);
+    
+    // Limitar entre 3 e 20 contas por página
+    ACCOUNTS_PER_PAGE = Math.max(3, Math.min(20, maxTabs));
+    
+    console.log(`📱 Resolução: ${screenWidth}px - Contas por página: ${ACCOUNTS_PER_PAGE}`);
 }
 
 // Inicializar
 async function init() {
     console.log('🚀 Iniciando aplicação...');
+    
+    // Calcular contas por página baseado na resolução
+    calculateAccountsPerPage();
     
     // Inicializar barra de título personalizada
     initTitleBar();
