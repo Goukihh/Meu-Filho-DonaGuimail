@@ -2,13 +2,6 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-REM Configurar encoding UTF-8 para evitar caracteres bugados
-chcp 65001 >nul
-git config --global core.quotepath false
-git config --global i18n.commitencoding utf-8
-git config --global i18n.logoutputencoding utf-8
-git config --global core.autocrlf false
-
 echo ========================================
 echo   RELEASE FINAL - FUNCIONA 100%
 echo ========================================
@@ -33,11 +26,7 @@ pause
 echo.
 echo [GIT] Fazendo commit das mudancas...
 git add .
-
-REM Criar arquivo temporario com mensagem de commit em UTF-8
-echo Release v%VERSION% - Barra de titulo personalizada e melhorias no layout > commit_msg.txt
-git commit -F commit_msg.txt
-del commit_msg.txt
+git commit -m "Release v%VERSION% - Custom title bar and layout improvements"
 if %errorlevel% neq 0 (
     echo [ERROR] Falha ao fazer commit
     echo [INFO] Pressione qualquer tecla para sair...
