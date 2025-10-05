@@ -19,8 +19,7 @@ set /p VERSION="Digite a nova versao (ex: 1.0.1): "
 
 echo.
 echo [INFO] IMPORTANTE: Atualize manualmente a versao no package.json
-echo [INFO] Mude a linha: "version": "1.1.2" para "version": "%VERSION%"
-echo [INFO] E tambem mude o artifactName para: "artifactName": "Meu Filho Setup %VERSION%.exe"
+echo [INFO] Mude a linha: "version": "1.0.0" para "version": "%VERSION%"
 echo [INFO] Depois pressione qualquer tecla para continuar...
 pause
 
