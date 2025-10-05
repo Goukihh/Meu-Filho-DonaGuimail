@@ -94,6 +94,66 @@ function createWindow() {
   mainWindow.on('resize', () => {
     updateBrowserViewBounds();
   });
+
+  // Configurar auto-updater após a janela estar pronta
+  mainWindow.once('ready-to-show', () => {
+    // Aguardar um pouco antes de verificar atualizações
+    setTimeout(() => {
+      console.log('🔄 Iniciando verificação de atualizações...');
+      autoUpdater.checkForUpdatesAndNotify();
+    }, 3000);
+  });
+
+  // Eventos do auto-updater para logging
+  autoUpdater.on('checking-for-update', () => {
+    console.log('🔄 Verificando atualizações...');
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    console.log('📦 Atualização disponível:', info.version);
+    
+    // Notificar o usuário sobre a atualização
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Atualização Disponível',
+      message: `Uma nova versão (${info.version}) está disponível!`,
+      detail: 'A atualização será baixada automaticamente em segundo plano.',
+      buttons: ['OK']
+    });
+  });
+
+  autoUpdater.on('update-not-available', (info) => {
+    console.log('✅ Aplicativo atualizado:', info.version);
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.error('❌ Erro no auto-updater:', err);
+  });
+
+  autoUpdater.on('download-progress', (progressObj) => {
+    let log_message = "Velocidade de download: " + progressObj.bytesPerSecond;
+    log_message = log_message + ' - Downloaded ' + progressObj.percent + '%';
+    log_message = log_message + ' (' + progressObj.transferred + "/" + progressObj.total + ')';
+    console.log('📥 Download da atualização:', log_message);
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log('✅ Atualização baixada:', info.version);
+    
+    // Notificar o usuário que a atualização foi baixada
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Atualização Pronta',
+      message: `A versão ${info.version} foi baixada com sucesso!`,
+      detail: 'O aplicativo será reiniciado para aplicar a atualização.',
+      buttons: ['Reiniciar Agora', 'Mais Tarde']
+    }).then((result) => {
+      if (result.response === 0) {
+        console.log('🔄 Reiniciando aplicativo para aplicar atualização...');
+        autoUpdater.quitAndInstall();
+      }
+    });
+  });
 }
 
 // Handlers para controles da janela personalizada
@@ -922,67 +982,6 @@ ipcMain.on('profile-picture-updated', (event, accountId, avatarUrl) => {
   }
 });
 
-// Configurar auto-updater após a janela estar pronta
-mainWindow.once('ready-to-show', () => {
-  // Aguardar um pouco antes de verificar atualizações
-  setTimeout(() => {
-    console.log('🔄 Iniciando verificação de atualizações...');
-    autoUpdater.checkForUpdatesAndNotify();
-  }, 3000);
-});
-
-// Eventos do auto-updater para logging
-autoUpdater.on('checking-for-update', () => {
-  console.log('🔄 Verificando atualizações...');
-});
-
-autoUpdater.on('update-available', (info) => {
-  console.log('📦 Atualização disponível:', info.version);
-  
-  // Notificar o usuário sobre a atualização
-  const { dialog } = require('electron');
-  dialog.showMessageBox(mainWindow, {
-    type: 'info',
-    title: 'Atualização Disponível',
-    message: `Uma nova versão (${info.version}) está disponível!`,
-    detail: 'A atualização será baixada automaticamente em segundo plano.',
-    buttons: ['OK']
-  });
-});
-
-autoUpdater.on('update-not-available', (info) => {
-  console.log('✅ Aplicativo atualizado:', info.version);
-});
-
-autoUpdater.on('error', (err) => {
-  console.error('❌ Erro no auto-updater:', err);
-});
-
-autoUpdater.on('download-progress', (progressObj) => {
-  let log_message = "Velocidade de download: " + progressObj.bytesPerSecond;
-  log_message = log_message + ' - Downloaded ' + progressObj.percent + '%';
-  log_message = log_message + ' (' + progressObj.transferred + "/" + progressObj.total + ')';
-  console.log('📥 Download da atualização:', log_message);
-});
-
-autoUpdater.on('update-downloaded', (info) => {
-  console.log('✅ Atualização baixada:', info.version);
-  
-  // Notificar o usuário que a atualização foi baixada
-  const { dialog } = require('electron');
-  dialog.showMessageBox(mainWindow, {
-    type: 'info',
-    title: 'Atualização Pronta',
-    message: `A versão ${info.version} foi baixada com sucesso!`,
-    detail: 'O aplicativo será reiniciado para aplicar a atualização.',
-    buttons: ['Reiniciar Agora', 'Mais Tarde']
-  }).then((result) => {
-    if (result.response === 0) {
-      console.log('🔄 Reiniciando aplicativo para aplicar atualização...');
-      autoUpdater.quitAndInstall();
-    }
-  });
-});
 
 // Eventos do app
 app.whenReady().then(async () => {
