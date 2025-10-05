@@ -24,6 +24,25 @@ echo [INFO] Depois pressione qualquer tecla para continuar...
 pause
 
 echo.
+echo [GIT] Fazendo commit das mudancas...
+git add package.json
+git commit -m "Bump version to %VERSION%"
+if %errorlevel% neq 0 (
+    echo [ERROR] Falha ao fazer commit
+    echo [INFO] Pressione qualquer tecla para sair...
+    pause >nul
+    exit /b 1
+)
+
+echo [GIT] Enviando mudancas para GitHub...
+git push origin main
+if %errorlevel% neq 0 (
+    echo [ERROR] Falha ao enviar mudancas
+    echo [INFO] Pressione qualquer tecla para sair...
+    pause >nul
+    exit /b 1
+)
+
 echo [GIT] Criando tag v%VERSION%...
 git tag v%VERSION%
 if %errorlevel% neq 0 (
@@ -33,7 +52,7 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-echo [GIT] Enviando para GitHub...
+echo [GIT] Enviando tag para GitHub...
 git push origin v%VERSION%
 if %errorlevel% neq 0 (
     echo [ERROR] Falha ao enviar tag
