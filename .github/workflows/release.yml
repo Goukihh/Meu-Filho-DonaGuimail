@@ -35,5 +35,6 @@ jobs:
         prerelease: false
         tag_name: ${{ github.ref_name }}
         name: Meu Filho ${{ github.ref_name }}
+        overwrite: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
