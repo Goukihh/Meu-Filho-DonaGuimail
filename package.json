@@ -1,6 +1,6 @@
 {
   "name": "meu-filho",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Um cliente Discord para múltiplas contas com mascaramento avançado de navegador.",
   "main": "src/main.js",
   "scripts": {
@@ -21,7 +21,6 @@
   "author": "Goukihh",
   "license": "MIT",
   "dependencies": {
-    "electron-updater": "^6.6.2",
     "user-agents": "^1.1.667"
   },
   "devDependencies": {

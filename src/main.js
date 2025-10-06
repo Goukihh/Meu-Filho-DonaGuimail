@@ -2,7 +2,7 @@ const { app, BrowserWindow, BrowserView, ipcMain, session, dialog } = require('e
 const path = require('path');
 const fs = require('fs');
 const UserAgent = require('user-agents');
-const { autoUpdater } = require('electron-updater');
+// Auto-updater removido para evitar falsos alarmes do Windows Defender
 
 // Usar pasta de dados do usuário para persistência permanente
 const userDataPath = app.getPath('userData');
@@ -30,8 +30,22 @@ const defaultAccounts = [
   { id: 'account3', name: 'Conta 3', profilePicture: null, active: false }
 ];
 
-// User-Agent realista (Chrome mais recente no Windows)
-const REALISTIC_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+// User-Agents realistas para rotação
+const REALISTIC_USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36'
+];
+
+// Função para obter User-Agent aleatório
+function getRandomUserAgent() {
+  return REALISTIC_USER_AGENTS[Math.floor(Math.random() * REALISTIC_USER_AGENTS.length)];
+}
+
+// User-Agent padrão (fallback)
+const REALISTIC_USER_AGENT = REALISTIC_USER_AGENTS[0];
 
 // Funções estáveis para leitura/escrita de contas
 function readAccounts() {
@@ -164,6 +178,22 @@ async function initializeSessionForAccount(account) {
     delete details.requestHeaders['Electron'];
     delete details.requestHeaders['X-Electron'];
     
+    // MASCARAR REQUISIÇÕES DE CAPTCHA (NÃO BLOQUEAR)
+    if (details.url.includes('hcaptcha.com') || 
+        details.url.includes('captcha') || 
+        details.url.includes('challenge') ||
+        details.url.includes('recaptcha')) {
+      console.log('🎭 Mascarando requisição de captcha:', details.url);
+      // Adicionar headers realistas em vez de bloquear
+      details.requestHeaders['User-Agent'] = REALISTIC_USER_AGENT;
+      details.requestHeaders['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8';
+      details.requestHeaders['Accept-Language'] = 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7';
+      details.requestHeaders['Sec-Fetch-Dest'] = 'document';
+      details.requestHeaders['Sec-Fetch-Mode'] = 'navigate';
+      details.requestHeaders['Sec-Fetch-Site'] = 'none';
+      details.requestHeaders['Sec-Fetch-User'] = '?1';
+    }
+    
     // Adicionar headers realistas para requisições ao Discord
     if (details.url.includes('canary.discord.com')) {
       details.requestHeaders['sec-ch-ua'] = '"Chromium";v="131", "Not_A Brand";v="24"';
@@ -176,6 +206,14 @@ async function initializeSessionForAccount(account) {
       details.requestHeaders['upgrade-insecure-requests'] = '1';
       details.requestHeaders['accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7';
       details.requestHeaders['accept-language'] = 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7';
+      
+      // Headers anti-detecção adicionais
+      details.requestHeaders['sec-ch-ua-arch'] = '"x86"';
+      details.requestHeaders['sec-ch-ua-bitness'] = '"64"';
+      details.requestHeaders['sec-ch-ua-full-version'] = '"131.0.6778.85"';
+      details.requestHeaders['sec-ch-ua-full-version-list'] = '"Chromium";v="131.0.6778.85", "Not_A Brand";v="24.0.0.0"';
+      details.requestHeaders['sec-ch-ua-model'] = '""';
+      details.requestHeaders['sec-ch-ua-wow64'] = '?0';
     }
     
     callback({ requestHeaders: details.requestHeaders });
@@ -265,36 +303,60 @@ function createBrowserView(accountId) {
   });
 
   // Gerar User-Agent rotativo e realista
-  const userAgent = new UserAgent({ deviceCategory: 'desktop' });
-  const randomUserAgent = userAgent.toString();
+  const randomUserAgent = getRandomUserAgent();
   console.log(`🔧 User-Agent gerado para ${accountId}: ${randomUserAgent}`);
   view.webContents.setUserAgent(randomUserAgent);
 
-  // INJETAR SCRIPT DE EVASÃO STEALTH NA BROWSERVIEW
-  const stealthScriptPath = path.join(__dirname, 'stealth.js');
+  // INJETAR SCRIPTS DE EVASÃO SEGUROS NA BROWSERVIEW
+  const stealthSafeScriptPath = path.join(__dirname, 'stealth-safe.js');
+  const captchaHandlerScriptPath = path.join(__dirname, 'captcha-handler.js');
+  
   view.webContents.executeJavaScript(`
-    // Carregar script de evasão stealth
-    fetch('file://${stealthScriptPath.replace(/\\/g, '/')}')
+    // Carregar script de evasão seguro
+    fetch('file://${stealthSafeScriptPath.replace(/\\/g, '/')}')
       .then(response => response.text())
       .then(script => {
         const scriptElement = document.createElement('script');
         scriptElement.textContent = script;
         document.head.appendChild(scriptElement);
-        console.log('🕵️ Script de evasão stealth carregado com sucesso');
+        console.log('🕵️ Script de evasão seguro carregado com sucesso');
       })
-      .catch(error => console.error('❌ Erro ao carregar script stealth:', error));
+      .catch(error => console.error('❌ Erro ao carregar script stealth seguro:', error));
+      
+    // Carregar manipulador de captcha inteligente
+    fetch('file://${captchaHandlerScriptPath.replace(/\\/g, '/')}')
+      .then(response => response.text())
+      .then(script => {
+        const scriptElement = document.createElement('script');
+        scriptElement.textContent = script;
+        document.head.appendChild(scriptElement);
+        console.log('🧠 Manipulador de captcha inteligente carregado com sucesso');
+      })
+      .catch(error => console.error('❌ Erro ao carregar manipulador de captcha:', error));
   `);
-  console.log(`🕵️ Script de evasão stealth injetado na BrowserView para: ${accountId}`);
+  console.log(`🕵️ Scripts de evasão seguros injetados na BrowserView para: ${accountId}`);
 
   // Injetar script de mascaramento quando o DOM estiver pronto
   view.webContents.on('dom-ready', () => {
     console.log(`Discord DOM pronto para ${accountId}`);
     
-    // INJETAR SCRIPT DE EVASÃO STEALTH DIRETAMENTE
-    const stealthScriptPath = path.join(__dirname, 'stealth.js');
-    const stealthScript = fs.readFileSync(stealthScriptPath, 'utf8');
-    view.webContents.executeJavaScript(stealthScript);
-    console.log(`🕵️ Script de evasão stealth executado diretamente para: ${accountId}`);
+    // INJETAR SCRIPTS DE EVASÃO SEGUROS DIRETAMENTE
+    const stealthSafeScriptPath = path.join(__dirname, 'stealth-safe.js');
+    const captchaHandlerScriptPath = path.join(__dirname, 'captcha-handler.js');
+    
+    const stealthSafeScript = fs.readFileSync(stealthSafeScriptPath, 'utf8');
+    const captchaHandlerScript = fs.readFileSync(captchaHandlerScriptPath, 'utf8');
+    const testEvasionScript = fs.readFileSync(path.join(__dirname, 'test-evasion.js'), 'utf8');
+    
+    view.webContents.executeJavaScript(stealthSafeScript);
+    view.webContents.executeJavaScript(captchaHandlerScript);
+    
+    // Executar teste de evasão após 2 segundos
+    setTimeout(() => {
+      view.webContents.executeJavaScript(testEvasionScript);
+    }, 2000);
+    
+    console.log(`🕵️ Scripts de evasão seguros e manipulador de captcha executados para: ${accountId}`);
     
     // Injetar script de mascaramento avançado
     view.webContents.executeJavaScript(`
@@ -922,37 +984,150 @@ ipcMain.on('profile-picture-updated', (event, accountId, avatarUrl) => {
   }
 });
 
-// Configurar auto-updater
-autoUpdater.checkForUpdatesAndNotify();
+// Sistema de verificação de atualizações seguro
+const https = require('https');
 
-// Eventos do auto-updater para logging
-autoUpdater.on('checking-for-update', () => {
-  console.log('🔄 Verificando atualizações...');
+// Verificar atualizações via GitHub API
+async function checkForUpdates() {
+  return new Promise((resolve) => {
+    const options = {
+      hostname: 'api.github.com',
+      port: 443,
+      path: '/repos/Goukihh/Meu-Filho-DonaGuimail/releases/latest',
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Meu-Filho-App',
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      
+      res.on('end', () => {
+        try {
+          const release = JSON.parse(data);
+          const latestVersion = release.tag_name.replace('v', '');
+          const currentVersion = require('../package.json').version;
+          
+          console.log(`🔍 Versão atual: ${currentVersion}`);
+          console.log(`🔍 Última versão: ${latestVersion}`);
+          
+          const isNewer = compareVersions(latestVersion, currentVersion) > 0;
+          
+          // Gerar descrição mais humana se não houver release notes
+          let humanReleaseNotes = release.body;
+          if (!humanReleaseNotes || humanReleaseNotes.trim() === '') {
+            humanReleaseNotes = generateHumanReleaseNotes(latestVersion, currentVersion);
+          }
+          
+          resolve({
+            hasUpdate: isNewer,
+            currentVersion,
+            latestVersion,
+            downloadUrl: release.assets[0]?.browser_download_url || release.html_url,
+            releaseNotes: humanReleaseNotes
+          });
+        } catch (error) {
+          console.error('❌ Erro ao verificar atualizações:', error);
+          resolve({ hasUpdate: false, error: `Erro ao processar resposta: ${error.message}` });
+        }
+      });
+    });
+    
+    req.on('error', (error) => {
+      console.error('❌ Erro na requisição:', error);
+      resolve({ hasUpdate: false, error: error.message });
+    });
+    
+    req.setTimeout(10000, () => {
+      req.destroy();
+      resolve({ hasUpdate: false, error: 'Timeout' });
+    });
+    
+    req.end();
+  });
+}
+
+// Comparar versões (ex: "1.2.1" vs "1.2.0")
+function compareVersions(version1, version2) {
+  const v1parts = version1.split('.').map(Number);
+  const v2parts = version2.split('.').map(Number);
+  
+  for (let i = 0; i < Math.max(v1parts.length, v2parts.length); i++) {
+    const v1part = v1parts[i] || 0;
+    const v2part = v2parts[i] || 0;
+    
+    if (v1part > v2part) return 1;
+    if (v1part < v2part) return -1;
+  }
+  
+  return 0;
+}
+
+// Gerar descrições de atualização mais humanas
+function generateHumanReleaseNotes(latestVersion, currentVersion) {
+  const versionParts = latestVersion.split('.');
+  const major = parseInt(versionParts[0]);
+  const minor = parseInt(versionParts[1]);
+  const patch = parseInt(versionParts[2]);
+  
+  const descriptions = [
+    `🎉 Nova versão ${latestVersion} disponível!`,
+    `✨ Melhorias e correções na versão ${latestVersion}`,
+    `🚀 Atualização ${latestVersion} com novidades incríveis`,
+    `🔧 Versão ${latestVersion} com correções importantes`,
+    `💫 Nova atualização ${latestVersion} pronta para você!`
+  ];
+  
+  let description = descriptions[Math.floor(Math.random() * descriptions.length)];
+  
+  // Adicionar detalhes baseados no tipo de atualização
+  if (major > parseInt(currentVersion.split('.')[0])) {
+    description += `\n\n🆕 Esta é uma atualização MAIOR com muitas novidades!`;
+    description += `\n• Novos recursos incríveis`;
+    description += `\n• Melhorias significativas`;
+    description += `\n• Correções importantes`;
+  } else if (minor > parseInt(currentVersion.split('.')[1])) {
+    description += `\n\n✨ Esta é uma atualização com melhorias!`;
+    description += `\n• Novos recursos adicionados`;
+    description += `\n• Melhorias de performance`;
+    description += `\n• Correções de bugs`;
+  } else {
+    description += `\n\n🔧 Esta é uma atualização de correções!`;
+    description += `\n• Bugs corrigidos`;
+    description += `\n• Melhorias de estabilidade`;
+    description += `\n• Otimizações gerais`;
+  }
+  
+  description += `\n\n💡 Recomendamos atualizar para a melhor experiência!`;
+  
+  return description;
+}
+
+// Handler para verificar atualizações
+ipcMain.handle('check-updates', async () => {
+  console.log('🔍 Verificando atualizações...');
+  const updateInfo = await checkForUpdates();
+  
+  if (updateInfo.hasUpdate) {
+    console.log(`📦 Atualização disponível: ${updateInfo.latestVersion}`);
+  } else {
+    console.log('✅ Aplicativo atualizado');
+  }
+  
+  return updateInfo;
 });
 
-autoUpdater.on('update-available', (info) => {
-  console.log('📦 Atualização disponível:', info.version);
-});
-
-autoUpdater.on('update-not-available', (info) => {
-  console.log('✅ Aplicativo atualizado:', info.version);
-});
-
-autoUpdater.on('error', (err) => {
-  console.error('❌ Erro no auto-updater:', err);
-});
-
-autoUpdater.on('download-progress', (progressObj) => {
-  let log_message = "Velocidade de download: " + progressObj.bytesPerSecond;
-  log_message = log_message + ' - Downloaded ' + progressObj.percent + '%';
-  log_message = log_message + ' (' + progressObj.transferred + "/" + progressObj.total + ')';
-  console.log('📥 Download da atualização:', log_message);
-});
-
-autoUpdater.on('update-downloaded', (info) => {
-  console.log('✅ Atualização baixada:', info.version);
-  console.log('🔄 Reiniciando aplicativo para aplicar atualização...');
-  autoUpdater.quitAndInstall();
+// Handler para abrir página de download
+ipcMain.handle('open-download-page', (event, downloadUrl) => {
+  const { shell } = require('electron');
+  shell.openExternal(downloadUrl);
+  return true;
 });
 
 // Eventos do app

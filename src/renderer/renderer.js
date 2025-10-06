@@ -17,6 +17,13 @@ const cancelAddBtn = document.getElementById('cancel-add-btn');
 const closeModalBtn = document.querySelector('.close');
 const contextMenu = document.getElementById('context-menu');
 
+// Elementos de verificação de atualizações
+const checkUpdatesBtn = document.getElementById('check-updates-btn');
+const updateTab = document.getElementById('update-tab');
+const closeUpdateTab = document.getElementById('close-update-tab');
+const cancelUpdateTabBtn = document.getElementById('cancel-update-tab-btn');
+const downloadUpdateTabBtn = document.getElementById('download-update-tab-btn');
+
 // Elementos de paginação
 const prevPageBtn = document.getElementById('prev-page-btn');
 const nextPageBtn = document.getElementById('next-page-btn');
@@ -67,27 +74,71 @@ function initTitleBar() {
     updateMaximizeIcon();
     
     // Recalcular contas por página quando a janela for redimensionada
+    let resizeTimeout;
     window.addEventListener('resize', () => {
-        calculateAccountsPerPage();
-        currentPage = 0; // Voltar para primeira página
-        renderAccounts();
+        // Debounce para evitar recálculos excessivos
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(() => {
+            console.log('🔄 Janela redimensionada - recalculando layout');
+            calculateAccountsPerPage();
+            currentPage = 0; // Voltar para primeira página
+            renderAccounts();
+        }, 150);
     });
 }
 
 // Calcular número de contas por página baseado na resolução
 function calculateAccountsPerPage() {
     const screenWidth = window.innerWidth;
-    const tabWidth = 75; // Largura de cada aba
-    const padding = 32; // Padding lateral
-    const navArrows = 80; // Espaço para setas de navegação
+    
+    // Para 1920x1080, forçar exatamente 20 contas por página
+    if (screenWidth >= 1920) {
+        ACCOUNTS_PER_PAGE = 20;
+        console.log(`📱 Resolução 1920x1080+ detectada - Contas por página: ${ACCOUNTS_PER_PAGE}`);
+        return;
+    }
+    
+    // Para outras resoluções, calcular dinamicamente
+    let tabWidth = 75;
+    let gap = 12;
+    let padding = 64;
+    let navArrows = 120;
+    
+    // Ajustes responsivos baseados na largura da tela
+    if (screenWidth >= 1600) {
+        tabWidth = 72;
+        gap = 10;
+        padding = 60;
+        navArrows = 110;
+    } else if (screenWidth >= 1400) {
+        tabWidth = 70;
+        gap = 8;
+        padding = 56;
+        navArrows = 100;
+    } else if (screenWidth >= 1200) {
+        tabWidth = 68;
+        gap = 6;
+        padding = 52;
+        navArrows = 90;
+    } else if (screenWidth >= 1000) {
+        tabWidth = 65;
+        gap = 5;
+        padding = 48;
+        navArrows = 80;
+    } else {
+        tabWidth = 60;
+        gap = 4;
+        padding = 44;
+        navArrows = 70;
+    }
     
     const availableWidth = screenWidth - padding - navArrows;
-    const maxTabs = Math.floor(availableWidth / tabWidth);
+    const maxTabs = Math.floor(availableWidth / (tabWidth + gap));
     
-    // Limitar entre 3 e 20 contas por página
-    ACCOUNTS_PER_PAGE = Math.max(3, Math.min(20, maxTabs));
+    // Limitar entre 3 e 25 contas por página (máximo 25 para não sobrecarregar)
+    ACCOUNTS_PER_PAGE = Math.max(3, Math.min(25, maxTabs));
     
-    console.log(`📱 Resolução: ${screenWidth}px - Contas por página: ${ACCOUNTS_PER_PAGE}`);
+    console.log(`📱 Resolução: ${screenWidth}px - Largura disponível: ${availableWidth}px - Largura da aba: ${tabWidth}px - Gap: ${gap}px - Contas por página: ${ACCOUNTS_PER_PAGE}`);
 }
 
 // Inicializar
@@ -153,6 +204,12 @@ function renderAccounts() {
             return;
         }
         
+        // Verificar se precisamos recalcular o número de contas por página
+        if (accounts.length > ACCOUNTS_PER_PAGE * 2) {
+            console.log('🔄 Muitas contas detectadas - recalculando layout');
+            calculateAccountsPerPage();
+        }
+        
         // Calcular índices da página atual
         const startIndex = currentPage * ACCOUNTS_PER_PAGE;
         const endIndex = Math.min(startIndex + ACCOUNTS_PER_PAGE, accounts.length);
@@ -180,19 +237,27 @@ function renderAccounts() {
     }
 }
 
+
 // Atualizar estado dos botões de navegação
 function updateNavigationButtons() {
     const totalPages = Math.ceil(accounts.length / ACCOUNTS_PER_PAGE);
+    const startIndex = currentPage * ACCOUNTS_PER_PAGE;
+    const endIndex = Math.min(startIndex + ACCOUNTS_PER_PAGE, accounts.length);
     
     if (prevPageBtn) {
         prevPageBtn.disabled = currentPage === 0;
+        prevPageBtn.title = currentPage === 0 ? 'Primeira página' : `Página anterior (${currentPage}/${totalPages - 1})`;
         console.log(`⬅️ Botão anterior: ${prevPageBtn.disabled ? 'desabilitado' : 'habilitado'}`);
     }
     
     if (nextPageBtn) {
         nextPageBtn.disabled = currentPage >= totalPages - 1;
+        nextPageBtn.title = currentPage >= totalPages - 1 ? 'Última página' : `Próxima página (${currentPage + 2}/${totalPages})`;
         console.log(`➡️ Botão próximo: ${nextPageBtn.disabled ? 'desabilitado' : 'habilitado'}`);
     }
+    
+    // Log informativo sobre a paginação
+    console.log(`📄 Página ${currentPage + 1}/${totalPages} - Mostrando contas ${startIndex + 1}-${endIndex} de ${accounts.length}`);
 }
 
 // Navegar para página anterior
@@ -702,6 +767,84 @@ function restoreAddAccountModal() {
     setupModalForAdd();
 }
 
+// Função para verificar atualizações
+async function checkForUpdates() {
+    try {
+        console.log('🔍 Verificando atualizações...');
+        
+        // Fechar BrowserView para evitar sobreposição
+        console.log('🔍 Fechando BrowserView para verificação de atualizações');
+        window.electron.send('close-browser-view-for-add');
+        
+        // Mostrar aba de verificação
+        updateTab.classList.add('show');
+        showCheckingState();
+        
+        const updateInfo = await window.electron.invoke('check-updates');
+        
+        if (updateInfo.error) {
+            console.error('❌ Erro ao verificar atualizações:', updateInfo.error);
+            showErrorState(updateInfo.error);
+            return;
+        }
+        
+        if (updateInfo.hasUpdate) {
+            console.log(`📦 Atualização disponível: ${updateInfo.latestVersion}`);
+            showUpdateState(updateInfo);
+        } else {
+            console.log('✅ Aplicativo atualizado');
+            showNoUpdateState();
+        }
+    } catch (error) {
+        console.error('❌ Erro ao verificar atualizações:', error);
+        showErrorState(error.message);
+    }
+}
+
+// Mostrar estado de verificação
+function showCheckingState() {
+    document.getElementById('update-checking').style.display = 'block';
+    document.getElementById('update-info').style.display = 'none';
+    document.getElementById('no-update-info').style.display = 'none';
+    document.getElementById('error-info').style.display = 'none';
+    document.getElementById('download-update-tab-btn').style.display = 'none';
+}
+
+// Mostrar estado de atualização disponível
+function showUpdateState(updateInfo) {
+    document.getElementById('current-version').textContent = updateInfo.currentVersion;
+    document.getElementById('latest-version').textContent = updateInfo.latestVersion;
+    document.getElementById('release-notes').textContent = updateInfo.releaseNotes || 'Nenhuma informação disponível.';
+    
+    document.getElementById('update-checking').style.display = 'none';
+    document.getElementById('update-info').style.display = 'block';
+    document.getElementById('no-update-info').style.display = 'none';
+    document.getElementById('error-info').style.display = 'none';
+    document.getElementById('download-update-tab-btn').style.display = 'inline-block';
+    
+    downloadUpdateTabBtn.dataset.downloadUrl = updateInfo.downloadUrl;
+}
+
+// Mostrar estado de nenhuma atualização
+function showNoUpdateState() {
+    document.getElementById('update-checking').style.display = 'none';
+    document.getElementById('update-info').style.display = 'none';
+    document.getElementById('no-update-info').style.display = 'block';
+    document.getElementById('error-info').style.display = 'none';
+    document.getElementById('download-update-tab-btn').style.display = 'none';
+}
+
+// Mostrar estado de erro
+function showErrorState(errorMessage) {
+    document.getElementById('error-message').textContent = errorMessage;
+    
+    document.getElementById('update-checking').style.display = 'none';
+    document.getElementById('update-info').style.display = 'none';
+    document.getElementById('no-update-info').style.display = 'none';
+    document.getElementById('error-info').style.display = 'block';
+    document.getElementById('download-update-tab-btn').style.display = 'none';
+}
+
     // Event listeners para navegação
     if (prevPageBtn) {
         prevPageBtn.addEventListener('click', goToPreviousPage);
@@ -711,6 +854,51 @@ function restoreAddAccountModal() {
     if (nextPageBtn) {
         nextPageBtn.addEventListener('click', goToNextPage);
         console.log('➡️ Event listener do botão próximo adicionado');
+    }
+
+    // Event listeners para verificação de atualizações
+    if (checkUpdatesBtn) {
+        checkUpdatesBtn.addEventListener('click', checkForUpdates);
+        console.log('🔄 Event listener do botão de verificação de atualizações adicionado');
+    }
+    
+    if (closeUpdateTab) {
+        closeUpdateTab.addEventListener('click', () => {
+            updateTab.classList.remove('show');
+            // Restaurar BrowserView após fechar aba de atualização
+            window.electron.send('context-menu-closed');
+        });
+    }
+    
+    if (cancelUpdateTabBtn) {
+        cancelUpdateTabBtn.addEventListener('click', () => {
+            updateTab.classList.remove('show');
+            // Restaurar BrowserView após fechar aba de atualização
+            window.electron.send('context-menu-closed');
+        });
+    }
+    
+    if (downloadUpdateTabBtn) {
+        downloadUpdateTabBtn.addEventListener('click', () => {
+            const downloadUrl = downloadUpdateTabBtn.dataset.downloadUrl;
+            if (downloadUrl) {
+                window.electron.invoke('open-download-page', downloadUrl);
+            }
+            updateTab.classList.remove('show');
+            // Restaurar BrowserView após fechar aba de atualização
+            window.electron.send('context-menu-closed');
+        });
+    }
+    
+    // Fechar aba de atualização ao clicar fora
+    if (updateTab) {
+        updateTab.addEventListener('click', (e) => {
+            if (e.target === updateTab) {
+                updateTab.classList.remove('show');
+                // Restaurar BrowserView após fechar aba de atualização
+                window.electron.send('context-menu-closed');
+            }
+        });
     }
 
     // Inicializar aplicativo
