@@ -259,13 +259,44 @@ async function initializeSessions() {
   }
 }
 
-// Carregar contas do armazenamento (usando fs)
+// Cache inteligente: Pré-carregar sessões mais usadas
+async function preloadFrequentSessions() {
+  try {
+    console.log('⚡ Iniciando pré-carregamento de sessões frequentes...');
+    
+    // Carregar apenas as primeiras 3 contas ativas para performance
+    const activeAccounts = accounts.filter(acc => acc.active).slice(0, 3);
+    
+    for (const account of activeAccounts) {
+      if (!sessionMap.has(account.id)) {
+        console.log(`🚀 Pré-carregando sessão para: ${account.name}`);
+        await createSession(account.id);
+      }
+    }
+    
+    console.log('✅ Pré-carregamento concluído');
+  } catch (error) {
+    console.error('❌ Erro no pré-carregamento:', error);
+  }
+}
+
+// Carregar contas do armazenamento (usando fs) - OTIMIZADO
 async function loadAccounts() {
   try {
     if (fs.existsSync(accountsFilePath)) {
       const data = fs.readFileSync(accountsFilePath, 'utf8');
       accounts = JSON.parse(data);
-      console.log('Contas carregadas do arquivo.');
+      console.log(`📱 ${accounts.length} contas carregadas do arquivo.`);
+      
+      // Otimização: Pré-processar contas para melhor performance
+      accounts.forEach(account => {
+        if (account.id && !account.avatar) {
+          account.avatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
+        }
+        // Garantir que todas as contas tenham propriedades essenciais
+        if (!account.active) account.active = false;
+        if (!account.name) account.name = `Conta ${accounts.indexOf(account) + 1}`;
+      });
     } else {
       accounts = defaultAccounts;
       console.log('Usando contas padrão, arquivo não encontrado.');
@@ -274,7 +305,16 @@ async function loadAccounts() {
     console.error('Erro ao carregar contas:', error);
     accounts = defaultAccounts;
   }
-  await initializeSessions();
+  
+  // Otimização: Inicializar sessões de forma assíncrona e não-bloqueante
+  setImmediate(() => {
+    initializeSessions();
+  });
+  
+  // Cache inteligente: Pré-carregar sessões mais usadas
+  setTimeout(() => {
+    preloadFrequentSessions();
+  }, 2000);
 }
 
 // Função saveAccounts removida - usar writeAccounts(accounts) em seu lugar
@@ -335,6 +375,7 @@ function createBrowserView(accountId) {
       .catch(error => console.error('❌ Erro ao carregar manipulador de captcha:', error));
   `);
   console.log(`🕵️ Scripts de evasão seguros injetados na BrowserView para: ${accountId}`);
+  console.log(`🕵️ Script de evasão avançado injetado na BrowserView para: ${accountId}`);
 
   // Injetar script de mascaramento quando o DOM estiver pronto
   view.webContents.on('dom-ready', () => {
@@ -1128,6 +1169,248 @@ ipcMain.handle('open-download-page', (event, downloadUrl) => {
   const { shell } = require('electron');
   shell.openExternal(downloadUrl);
   return true;
+});
+
+// ========================================
+// FUNCIONALIDADES DE FUNDO PERSONALIZADO
+// ========================================
+
+// Obter configuração de fundo
+ipcMain.handle('get-background-setting', () => {
+  try {
+    const settingsPath = path.join(userDataPath, 'settings.json');
+    if (fs.existsSync(settingsPath)) {
+      const data = fs.readFileSync(settingsPath, 'utf8');
+      const settings = JSON.parse(data);
+      return settings.backgroundImage || null;
+    }
+    return null;
+  } catch (error) {
+    console.error('Erro ao obter configuração de fundo:', error);
+    return null;
+  }
+});
+
+// Definir imagem de fundo
+ipcMain.handle('set-background-image', async (event, imagePath) => {
+  try {
+    if (!imagePath || !fs.existsSync(imagePath)) {
+      return { success: false, message: 'Arquivo de imagem não encontrado' };
+    }
+
+    // Copiar imagem para pasta de dados do usuário
+    const customBackgroundPath = path.join(userDataPath, 'custom-background.png');
+    fs.copyFileSync(imagePath, customBackgroundPath);
+    
+    // Salvar configuração
+    const settingsPath = path.join(userDataPath, 'settings.json');
+    let settings = {};
+    if (fs.existsSync(settingsPath)) {
+      const data = fs.readFileSync(settingsPath, 'utf8');
+      settings = JSON.parse(data);
+    }
+    
+    settings.backgroundImage = customBackgroundPath;
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+    
+    console.log('🎨 Imagem de fundo personalizada salva:', customBackgroundPath);
+    return { success: true, message: 'Fundo personalizado salvo com sucesso!' };
+  } catch (error) {
+    console.error('Erro ao definir imagem de fundo:', error);
+    return { success: false, message: `Erro ao salvar fundo: ${error.message}` };
+  }
+});
+
+// Restaurar fundo padrão
+ipcMain.handle('restore-default-background', async () => {
+  try {
+    const customBackgroundPath = path.join(userDataPath, 'custom-background.png');
+    
+    // Remover arquivo de fundo personalizado se existir
+    if (fs.existsSync(customBackgroundPath)) {
+      fs.unlinkSync(customBackgroundPath);
+    }
+    
+    // Limpar configuração
+    const settingsPath = path.join(userDataPath, 'settings.json');
+    let settings = {};
+    if (fs.existsSync(settingsPath)) {
+      const data = fs.readFileSync(settingsPath, 'utf8');
+      settings = JSON.parse(data);
+    }
+    
+    delete settings.backgroundImage;
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+    
+    console.log('🎨 Fundo padrão restaurado');
+    return { success: true, message: 'Fundo padrão restaurado com sucesso!' };
+  } catch (error) {
+    console.error('Erro ao restaurar fundo padrão:', error);
+    return { success: false, message: `Erro ao restaurar fundo: ${error.message}` };
+  }
+});
+
+// ========================================
+// FUNCIONALIDADES DE PERSONALIZAÇÃO DE CORES
+// ========================================
+
+// Obter cor personalizada
+ipcMain.handle('get-custom-color', () => {
+  try {
+    const settingsPath = path.join(userDataPath, 'settings.json');
+    if (fs.existsSync(settingsPath)) {
+      const data = fs.readFileSync(settingsPath, 'utf8');
+      const settings = JSON.parse(data);
+      return settings.customColor || null;
+    }
+    return null;
+  } catch (error) {
+    console.error('Erro ao obter cor personalizada:', error);
+    return null;
+  }
+});
+
+// Definir cor personalizada
+ipcMain.handle('set-custom-color', async (event, color) => {
+  try {
+    if (!color || !color.match(/^#[0-9A-F]{6}$/i)) {
+      return { success: false, message: 'Cor inválida' };
+    }
+
+    // Salvar configuração com compressão
+    const settingsPath = path.join(userDataPath, 'settings.json');
+    let settings = {};
+    if (fs.existsSync(settingsPath)) {
+      const data = fs.readFileSync(settingsPath, 'utf8');
+      settings = JSON.parse(data);
+    }
+    
+    settings.customColor = color;
+    settings.lastUpdated = Date.now();
+    
+    // Compressão: Remover espaços desnecessários
+    const compressedData = JSON.stringify(settings);
+    fs.writeFileSync(settingsPath, compressedData);
+    
+    console.log('🎨 Cor personalizada salva:', color);
+    return { success: true, message: 'Cor personalizada salva com sucesso!' };
+  } catch (error) {
+    console.error('Erro ao salvar cor personalizada:', error);
+    return { success: false, message: `Erro ao salvar cor: ${error.message}` };
+  }
+});
+
+// Restaurar cor padrão
+ipcMain.handle('reset-custom-color', async () => {
+  try {
+    // Limpar configuração
+    const settingsPath = path.join(userDataPath, 'settings.json');
+    let settings = {};
+    if (fs.existsSync(settingsPath)) {
+      const data = fs.readFileSync(settingsPath, 'utf8');
+      settings = JSON.parse(data);
+    }
+    
+    delete settings.customColor;
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+    
+    console.log('🎨 Cor padrão restaurada');
+    return { success: true, message: 'Cor padrão restaurada com sucesso!' };
+  } catch (error) {
+    console.error('Erro ao restaurar cor padrão:', error);
+    return { success: false, message: `Erro ao restaurar cor: ${error.message}` };
+  }
+});
+
+// ========================================
+// FUNCIONALIDADES DE IMPORTAR/EXPORTAR CONTAS
+// ========================================
+
+// Exportar contas para arquivo JSON
+ipcMain.handle('export-accounts', async () => {
+  try {
+    const { dialog } = require('electron');
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Exportar Contas',
+      defaultPath: 'contas-meu-filho.json',
+      filters: [
+        { name: 'JSON Files', extensions: ['json'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+
+    if (!result.canceled && result.filePath) {
+      const exportData = {
+        version: '1.2.1',
+        exportDate: new Date().toISOString(),
+        accounts: accounts.map(account => ({
+          id: account.id,
+          name: account.name,
+          avatar: account.avatar,
+          active: account.active
+        }))
+      };
+
+      fs.writeFileSync(result.filePath, JSON.stringify(exportData, null, 2));
+      console.log(`📤 ${accounts.length} contas exportadas para: ${result.filePath}`);
+      return { success: true, message: `${accounts.length} contas exportadas com sucesso!` };
+    }
+    return { success: false, message: 'Exportação cancelada' };
+  } catch (error) {
+    console.error('❌ Erro ao exportar contas:', error);
+    return { success: false, message: `Erro ao exportar: ${error.message}` };
+  }
+});
+
+// Importar contas de arquivo JSON
+ipcMain.handle('import-accounts', async () => {
+  try {
+    const { dialog } = require('electron');
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Importar Contas',
+      filters: [
+        { name: 'JSON Files', extensions: ['json'] },
+        { name: 'All Files', extensions: ['*'] }
+      ],
+      properties: ['openFile']
+    });
+
+    if (!result.canceled && result.filePaths.length > 0) {
+      const filePath = result.filePaths[0];
+      const fileContent = fs.readFileSync(filePath, 'utf8');
+      const importData = JSON.parse(fileContent);
+
+      if (!importData.accounts || !Array.isArray(importData.accounts)) {
+        return { success: false, message: 'Arquivo inválido: formato de contas não encontrado' };
+      }
+
+      // Validar e processar contas importadas
+      const importedAccounts = importData.accounts.map((account, index) => ({
+        id: account.id || `imported-${Date.now()}-${index}`,
+        name: account.name || `Conta Importada ${index + 1}`,
+        avatar: account.avatar || null,
+        active: false // Contas importadas começam inativas
+      }));
+
+      // Adicionar contas importadas às existentes
+      const newAccounts = [...accounts, ...importedAccounts];
+      
+      // Salvar contas atualizadas
+      writeAccounts(newAccounts);
+      accounts = newAccounts;
+
+      console.log(`📥 ${importedAccounts.length} contas importadas de: ${filePath}`);
+      return { 
+        success: true, 
+        message: `${importedAccounts.length} contas importadas com sucesso!`,
+        importedCount: importedAccounts.length
+      };
+    }
+    return { success: false, message: 'Importação cancelada' };
+  } catch (error) {
+    console.error('❌ Erro ao importar contas:', error);
+    return { success: false, message: `Erro ao importar: ${error.message}` };
+  }
 });
 
 // Eventos do app

@@ -213,3 +213,7 @@ if (typeof window !== 'undefined') {
 
 console.log('🧠 Manipulador de captcha inteligente ativado');
 
+
+
+
+

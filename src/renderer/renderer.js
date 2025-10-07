@@ -7,6 +7,25 @@ let editingAccountId = null;
 let currentPage = 0;
 let ACCOUNTS_PER_PAGE = 20; // Será ajustado dinamicamente baseado na resolução
 
+// Cache de performance
+const avatarCache = new Map();
+const sessionCache = new Map();
+const imageObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+        if (entry.isIntersecting) {
+            const img = entry.target;
+            const accountId = img.dataset.accountId;
+            const account = accounts.find(acc => acc.id === accountId);
+            
+            if (account && account.avatar && !avatarCache.has(accountId)) {
+                // Carregar avatar apenas quando visível
+                img.src = account.avatar;
+                avatarCache.set(accountId, account.avatar);
+            }
+        }
+    });
+}, { rootMargin: '50px' });
+
 // Elementos DOM
 const avatarTabsContainer = document.getElementById('avatar-tabs');
 const addAccountBtn = document.getElementById('add-account-btn');
@@ -155,6 +174,12 @@ async function init() {
     console.log('📖 Carregando contas...');
     accounts = await window.electron.invoke('get-accounts');
     console.log('📋 Contas carregadas:', accounts.length);
+    
+    // Carregar fundo personalizado
+    await loadCustomBackground();
+    
+    // Carregar cores personalizadas
+    await loadCustomColors();
     
     // Tela de carregamento falsa - fade out elegante após 3 segundos
     setTimeout(() => {
@@ -310,15 +335,26 @@ function createAccountTab(account) {
         avatarCircle.className = 'avatar-circle';
         
         if (account.profilePicture) {
-            // Adicionar cache para melhor performance
-            const img = new Image();
-            img.onload = () => {
-                avatarCircle.style.backgroundImage = `url(${account.profilePicture})`;
+            // Usar cache se disponível
+            if (avatarCache.has(account.id)) {
+                avatarCircle.style.backgroundImage = `url(${avatarCache.get(account.id)})`;
                 avatarCircle.style.backgroundSize = 'cover';
                 avatarCircle.style.backgroundPosition = 'center';
                 avatarCircle.style.backgroundRepeat = 'no-repeat';
-            };
-            img.src = account.profilePicture;
+            } else {
+                // Lazy loading com Intersection Observer
+                const img = new Image();
+                img.dataset.accountId = account.id;
+                img.onload = () => {
+                    avatarCircle.style.backgroundImage = `url(${account.profilePicture})`;
+                    avatarCircle.style.backgroundSize = 'cover';
+                    avatarCircle.style.backgroundPosition = 'center';
+                    avatarCircle.style.backgroundRepeat = 'no-repeat';
+                    avatarCache.set(account.id, account.profilePicture);
+                };
+                img.src = account.profilePicture;
+                imageObserver.observe(img);
+            }
         } else {
             // Placeholder com primeira letra do nome
             avatarCircle.textContent = account.name.charAt(0).toUpperCase();
@@ -856,11 +892,571 @@ function showErrorState(errorMessage) {
         console.log('➡️ Event listener do botão próximo adicionado');
     }
 
-    // Event listeners para verificação de atualizações
-    if (checkUpdatesBtn) {
-        checkUpdatesBtn.addEventListener('click', checkForUpdates);
-        console.log('🔄 Event listener do botão de verificação de atualizações adicionado');
+// Event listeners para verificação de atualizações
+if (checkUpdatesBtn) {
+    checkUpdatesBtn.addEventListener('click', checkForUpdates);
+    console.log('🔄 Event listener do botão de verificação de atualizações adicionado');
+}
+
+// ========================================
+// FUNCIONALIDADES DE IMPORTAR/EXPORTAR CONTAS
+// ========================================
+
+// Elementos para importar/exportar
+const exportAccountsBtn = document.getElementById('export-accounts-btn');
+const importAccountsBtn = document.getElementById('import-accounts-btn');
+
+// Elementos das abas
+const exportTab = document.getElementById('export-tab');
+const importTab = document.getElementById('import-tab');
+const closeExportTab = document.getElementById('close-export-tab');
+const closeImportTab = document.getElementById('close-import-tab');
+const cancelExportTabBtn = document.getElementById('cancel-export-tab-btn');
+const cancelImportTabBtn = document.getElementById('cancel-import-tab-btn');
+
+// Exportar contas
+async function exportAccounts() {
+    try {
+        console.log('📤 Iniciando exportação de contas...');
+        
+        // Fechar BrowserView para evitar sobreposição
+        console.log('📤 Fechando BrowserView para exportação');
+        window.electron.send('close-browser-view-for-add');
+        
+        // Mostrar aba de exportação
+        exportTab.classList.add('show');
+        showExportProcessing();
+        
+        const result = await window.electron.invoke('export-accounts');
+        
+        if (result.success) {
+            console.log('✅ Exportação bem-sucedida:', result.message);
+            showExportSuccess(result.message);
+        } else {
+            console.log('❌ Exportação falhou:', result.message);
+            showExportError(result.message);
+        }
+    } catch (error) {
+        console.error('❌ Erro ao exportar contas:', error);
+        showExportError('Erro ao exportar contas');
     }
+}
+
+// Importar contas
+async function importAccounts() {
+    try {
+        console.log('📥 Iniciando importação de contas...');
+        
+        // Fechar BrowserView para evitar sobreposição
+        console.log('📥 Fechando BrowserView para importação');
+        window.electron.send('close-browser-view-for-add');
+        
+        // Mostrar aba de importação
+        importTab.classList.add('show');
+        showImportSelecting();
+        
+        const result = await window.electron.invoke('import-accounts');
+        
+        if (result.success) {
+            console.log('✅ Importação bem-sucedida:', result.message);
+            showImportSuccess(result.message);
+            // Recarregar a página após 2 segundos
+            setTimeout(() => {
+                window.location.reload();
+            }, 2000);
+        } else {
+            console.log('❌ Importação falhou:', result.message);
+            showImportError(result.message);
+        }
+    } catch (error) {
+        console.error('❌ Erro ao importar contas:', error);
+        showImportError('Erro ao importar contas');
+    }
+}
+
+// Funções para mostrar estados das abas
+function showExportProcessing() {
+    document.getElementById('export-processing').style.display = 'block';
+    document.getElementById('export-success').style.display = 'none';
+    document.getElementById('export-error').style.display = 'none';
+}
+
+function showExportSuccess(message) {
+    document.getElementById('export-success-message').textContent = message;
+    document.getElementById('export-processing').style.display = 'none';
+    document.getElementById('export-success').style.display = 'block';
+    document.getElementById('export-error').style.display = 'none';
+}
+
+function showExportError(message) {
+    document.getElementById('export-error-message').textContent = message;
+    document.getElementById('export-processing').style.display = 'none';
+    document.getElementById('export-success').style.display = 'none';
+    document.getElementById('export-error').style.display = 'block';
+}
+
+function showImportSelecting() {
+    document.getElementById('import-selecting').style.display = 'block';
+    document.getElementById('import-success').style.display = 'none';
+    document.getElementById('import-error').style.display = 'none';
+}
+
+function showImportSuccess(message) {
+    document.getElementById('import-success-message').textContent = message;
+    document.getElementById('import-selecting').style.display = 'none';
+    document.getElementById('import-success').style.display = 'block';
+    document.getElementById('import-error').style.display = 'none';
+}
+
+function showImportError(message) {
+    document.getElementById('import-error-message').textContent = message;
+    document.getElementById('import-selecting').style.display = 'none';
+    document.getElementById('import-success').style.display = 'none';
+    document.getElementById('import-error').style.display = 'block';
+}
+
+// Função para mostrar notificações
+function showNotification(message, type = 'info') {
+    // Criar elemento de notificação
+    const notification = document.createElement('div');
+    notification.className = `notification notification-${type}`;
+    notification.textContent = message;
+    
+    // Estilos da notificação
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 12px 20px;
+        border-radius: 6px;
+        color: white;
+        font-weight: 600;
+        z-index: 10000;
+        max-width: 300px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        transform: translateX(100%);
+        transition: transform 0.3s ease;
+    `;
+    
+    // Cores baseadas no tipo
+    if (type === 'success') {
+        notification.style.background = 'linear-gradient(135deg, #4CAF50, #45a049)';
+    } else if (type === 'error') {
+        notification.style.background = 'linear-gradient(135deg, #f44336, #d32f2f)';
+    } else {
+        notification.style.background = 'linear-gradient(135deg, #2196F3, #1976D2)';
+    }
+    
+    // Adicionar ao DOM
+    document.body.appendChild(notification);
+    
+    // Animar entrada
+    setTimeout(() => {
+        notification.style.transform = 'translateX(0)';
+    }, 100);
+    
+    // Remover após 3 segundos
+    setTimeout(() => {
+        notification.style.transform = 'translateX(100%)';
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.parentNode.removeChild(notification);
+            }
+        }, 300);
+    }, 3000);
+}
+
+// Event listeners para importar/exportar (agora no modal de configurações)
+if (exportAccountsBtn) {
+    exportAccountsBtn.addEventListener('click', exportAccounts);
+    console.log('📤 Event listener do botão de exportar adicionado');
+}
+
+if (importAccountsBtn) {
+    importAccountsBtn.addEventListener('click', importAccounts);
+    console.log('📥 Event listener do botão de importar adicionado');
+}
+
+// ========================================
+// FUNCIONALIDADES DE CONFIGURAÇÕES DE FUNDO
+// ========================================
+
+// Elementos do modal de configurações
+const settingsBtn = document.getElementById('settings-btn');
+const backgroundSettingsModal = document.getElementById('background-settings-modal');
+const closeBackgroundSettings = document.getElementById('close-background-settings');
+const imageUploadInput = document.getElementById('image-upload-input');
+const backgroundPreview = document.getElementById('background-preview');
+const noPreview = document.getElementById('no-preview');
+const saveBackgroundBtn = document.getElementById('save-background-btn');
+// restoreBackgroundBtn removido - agora usamos apenas resetColorsBtn
+
+// Elementos do seletor de cores
+const primaryColorPicker = document.getElementById('primary-color-picker');
+const resetColorsBtn = document.getElementById('reset-colors-btn');
+const applyColorsBtn = document.getElementById('apply-colors-btn');
+
+// Abrir modal de configurações
+if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => {
+        // Fechar BrowserView para evitar sobreposição
+        window.electron.send('close-browser-view-for-add');
+        
+        // Mostrar modal
+        backgroundSettingsModal.classList.add('show');
+        console.log('⚙️ Modal de configurações aberto');
+    });
+}
+
+// Fechar modal de configurações
+if (closeBackgroundSettings) {
+    closeBackgroundSettings.addEventListener('click', () => {
+        backgroundSettingsModal.classList.remove('show');
+        window.electron.send('context-menu-closed'); // Restaurar BrowserView
+        console.log('⚙️ Modal de configurações fechado');
+    });
+}
+
+// Fechar modal ao clicar fora
+if (backgroundSettingsModal) {
+    backgroundSettingsModal.addEventListener('click', (e) => {
+        if (e.target === backgroundSettingsModal) {
+            backgroundSettingsModal.classList.remove('show');
+            window.electron.send('context-menu-closed'); // Restaurar BrowserView
+        }
+    });
+}
+
+// Preview da imagem selecionada
+if (imageUploadInput) {
+    imageUploadInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                backgroundPreview.src = e.target.result;
+                backgroundPreview.style.display = 'block';
+                noPreview.style.display = 'none';
+                console.log('🖼️ Preview da imagem atualizado');
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+}
+
+// Salvar fundo personalizado
+if (saveBackgroundBtn) {
+    saveBackgroundBtn.addEventListener('click', async () => {
+        const file = imageUploadInput.files[0];
+        if (file) {
+            try {
+                // Converter File para caminho (simulação)
+                const imagePath = file.path || file.name;
+                await setCustomBackground(imagePath);
+                backgroundSettingsModal.classList.remove('show');
+                window.electron.send('context-menu-closed'); // Restaurar BrowserView
+            } catch (error) {
+                console.error('❌ Erro ao salvar fundo:', error);
+                showNotification('Erro ao salvar fundo personalizado', 'error');
+            }
+        } else {
+            // Se não há imagem, apenas fechar o modal (permitir salvar apenas cores)
+            backgroundSettingsModal.classList.remove('show');
+            window.electron.send('context-menu-closed'); // Restaurar BrowserView
+        }
+    });
+}
+
+// Botão de restaurar fundo removido - agora usamos apenas o botão "Restaurar Padrão Gragas"
+
+// Event listeners para fechar abas
+if (closeExportTab) {
+    closeExportTab.addEventListener('click', () => {
+        exportTab.classList.remove('show');
+        window.electron.send('context-menu-closed'); // Restaurar BrowserView
+    });
+}
+
+if (closeImportTab) {
+    closeImportTab.addEventListener('click', () => {
+        importTab.classList.remove('show');
+        window.electron.send('context-menu-closed'); // Restaurar BrowserView
+    });
+}
+
+if (cancelExportTabBtn) {
+    cancelExportTabBtn.addEventListener('click', () => {
+        exportTab.classList.remove('show');
+        window.electron.send('context-menu-closed'); // Restaurar BrowserView
+    });
+}
+
+if (cancelImportTabBtn) {
+    cancelImportTabBtn.addEventListener('click', () => {
+        importTab.classList.remove('show');
+        window.electron.send('context-menu-closed'); // Restaurar BrowserView
+    });
+}
+
+// Fechar abas ao clicar fora
+if (exportTab) {
+    exportTab.addEventListener('click', (e) => {
+        if (e.target === exportTab) {
+            exportTab.classList.remove('show');
+            window.electron.send('context-menu-closed'); // Restaurar BrowserView
+        }
+    });
+}
+
+if (importTab) {
+    importTab.addEventListener('click', (e) => {
+        if (e.target === importTab) {
+            importTab.classList.remove('show');
+            window.electron.send('context-menu-closed'); // Restaurar BrowserView
+        }
+    });
+}
+
+// ========================================
+// FUNCIONALIDADES DE FUNDO PERSONALIZADO
+// ========================================
+
+// Carregar fundo personalizado na inicialização
+async function loadCustomBackground() {
+    try {
+        const backgroundPath = await window.electron.invoke('get-background-setting');
+        if (backgroundPath) {
+            applyCustomBackground(backgroundPath);
+            console.log('🎨 Fundo personalizado carregado:', backgroundPath);
+        } else {
+            restoreDefaultBackground();
+            console.log('🎨 Usando fundo padrão do Gragas');
+        }
+    } catch (error) {
+        console.error('❌ Erro ao carregar fundo personalizado:', error);
+        restoreDefaultBackground();
+    }
+}
+
+// Aplicar fundo personalizado (lógica simples)
+function applyCustomBackground(imagePath) {
+    const backgroundLayer = document.getElementById('background-layer');
+    if (backgroundLayer) {
+        // Normalizar caminho do arquivo para Windows (trocar \ por /)
+        const normalizedPath = imagePath.replace(/\\/g, '/');
+        
+        backgroundLayer.style.backgroundImage = `url('file://${normalizedPath}')`;
+        console.log('🎨 Fundo personalizado aplicado:', normalizedPath);
+    }
+}
+
+// Restaurar fundo padrão (lógica simples)
+function restoreDefaultBackground() {
+    const backgroundLayer = document.getElementById('background-layer');
+    if (backgroundLayer) {
+        backgroundLayer.style.backgroundImage = '';
+        console.log('🎨 Fundo padrão restaurado');
+    }
+}
+
+// Função para definir novo fundo
+async function setCustomBackground(imagePath) {
+    try {
+        const result = await window.electron.invoke('set-background-image', imagePath);
+        if (result.success) {
+            applyCustomBackground(imagePath);
+            showNotification(result.message, 'success');
+        } else {
+            showNotification(result.message, 'error');
+        }
+    } catch (error) {
+        console.error('❌ Erro ao definir fundo personalizado:', error);
+        showNotification('Erro ao definir fundo personalizado', 'error');
+    }
+}
+
+// Função para restaurar fundo padrão
+async function restoreDefaultBackgroundAction() {
+    try {
+        const result = await window.electron.invoke('restore-default-background');
+        if (result.success) {
+            restoreDefaultBackground();
+            showNotification(result.message, 'success');
+        } else {
+            showNotification(result.message, 'error');
+        }
+    } catch (error) {
+        console.error('❌ Erro ao restaurar fundo padrão:', error);
+        showNotification('Erro ao restaurar fundo padrão', 'error');
+    }
+}
+
+// ========================================
+// FUNCIONALIDADES DE PERSONALIZAÇÃO DE CORES
+// ========================================
+
+// Carregar cor personalizada na inicialização
+async function loadCustomColors() {
+    try {
+        const customColor = await window.electron.invoke('get-custom-color');
+        if (customColor) {
+            applyCustomColor(customColor);
+            if (primaryColorPicker) primaryColorPicker.value = customColor;
+            console.log('🎨 Cor personalizada carregada:', customColor);
+        } else {
+            console.log('🎨 Usando cor padrão do Gragas');
+        }
+    } catch (error) {
+        console.error('❌ Erro ao carregar cor personalizada:', error);
+    }
+}
+
+// Aplicar cor personalizada
+function applyCustomColor(color) {
+    // Atualizar variáveis CSS
+    document.documentElement.style.setProperty('--gragas-orange', color);
+    document.documentElement.style.setProperty('--sunset-gradient', `linear-gradient(135deg, ${color}, ${darkenColor(color, 20)})`);
+    
+    // Aplicar cor no cabeçalho (barra de título personalizada)
+    const customTitleBar = document.querySelector('.custom-title-bar');
+    if (customTitleBar) {
+        customTitleBar.style.background = `linear-gradient(135deg, ${darkenColor(color, 30)} 0%, ${darkenColor(color, 15)} 50%, ${color} 100%)`;
+        customTitleBar.style.borderBottomColor = color;
+    }
+    
+    console.log('🎨 Cor personalizada aplicada:', color);
+}
+
+// Escurecer cor para gradiente
+function darkenColor(color, percent) {
+    const num = parseInt(color.replace("#", ""), 16);
+    const amt = Math.round(2.55 * percent);
+    const R = (num >> 16) - amt;
+    const G = (num >> 8 & 0x00FF) - amt;
+    const B = (num & 0x0000FF) - amt;
+    return "#" + (0x1000000 + (R < 255 ? R < 1 ? 0 : R : 255) * 0x10000 +
+        (G < 255 ? G < 1 ? 0 : G : 255) * 0x100 +
+        (B < 255 ? B < 1 ? 0 : B : 255)).toString(16).slice(1);
+}
+
+// Salvar cor personalizada
+async function saveCustomColor(color) {
+    try {
+        const result = await window.electron.invoke('set-custom-color', color);
+        if (result.success) {
+            applyCustomColor(color);
+            showNotification('Cor personalizada salva com sucesso!', 'success');
+        } else {
+            showNotification(result.message, 'error');
+        }
+    } catch (error) {
+        console.error('❌ Erro ao salvar cor personalizada:', error);
+        showNotification('Erro ao salvar cor personalizada', 'error');
+    }
+}
+
+// Restaurar cor padrão
+async function resetCustomColor() {
+    try {
+        const result = await window.electron.invoke('reset-custom-color');
+        if (result.success) {
+            // Restaurar cor padrão
+            const defaultColor = '#FF6B35';
+            applyCustomColor(defaultColor);
+            if (primaryColorPicker) primaryColorPicker.value = defaultColor;
+            showNotification('Cor padrão restaurada!', 'success');
+        } else {
+            showNotification(result.message, 'error');
+        }
+    } catch (error) {
+        console.error('❌ Erro ao restaurar cor padrão:', error);
+        showNotification('Erro ao restaurar cor padrão', 'error');
+    }
+}
+
+// Restaurar tudo para o padrão (cores + fundo)
+async function resetAllToDefault() {
+    try {
+        // Restaurar cor padrão
+        const colorResult = await window.electron.invoke('reset-custom-color');
+        if (colorResult.success) {
+            const defaultColor = '#FF6B35';
+            applyCustomColor(defaultColor);
+            if (primaryColorPicker) primaryColorPicker.value = defaultColor;
+        }
+        
+        // Restaurar fundo padrão
+        const backgroundResult = await window.electron.invoke('restore-default-background');
+        if (backgroundResult.success) {
+            restoreDefaultBackground();
+        }
+        
+        // Limpar seleção de imagem
+        if (imageUploadInput) {
+            imageUploadInput.value = '';
+        }
+        
+        // Esconder preview de imagem
+        if (backgroundPreview) {
+            backgroundPreview.style.display = 'none';
+            backgroundPreview.src = '';
+        }
+        if (noPreview) {
+            noPreview.style.display = 'block';
+        }
+        
+        showNotification('Tudo restaurado para o padrão Gragas!', 'success');
+    } catch (error) {
+        console.error('❌ Erro ao restaurar tudo:', error);
+        showNotification('Erro ao restaurar configurações', 'error');
+    }
+}
+
+// Event listeners para personalização de cores
+if (primaryColorPicker) {
+    primaryColorPicker.addEventListener('input', (e) => {
+        const color = e.target.value;
+        applyCustomColor(color);
+        console.log('🎨 Cor selecionada:', color);
+    });
+}
+
+// Limpeza de memória para performance
+function cleanupMemory() {
+    // Limpar cache de avatares antigos (manter apenas últimos 20)
+    if (avatarCache.size > 20) {
+        const entries = Array.from(avatarCache.entries());
+        const toRemove = entries.slice(0, entries.length - 20);
+        toRemove.forEach(([key]) => avatarCache.delete(key));
+        console.log('🧹 Cache de avatares limpo');
+    }
+    
+    // Limpar observadores de imagens não utilizadas
+    const observedImages = document.querySelectorAll('img[data-account-id]');
+    observedImages.forEach(img => {
+        if (!img.isConnected) {
+            imageObserver.unobserve(img);
+        }
+    });
+}
+
+// Executar limpeza a cada 5 minutos
+setInterval(cleanupMemory, 5 * 60 * 1000);
+
+if (applyColorsBtn) {
+    applyColorsBtn.addEventListener('click', async () => {
+        if (primaryColorPicker) {
+            const color = primaryColorPicker.value;
+            await saveCustomColor(color);
+        }
+    });
+}
+
+if (resetColorsBtn) {
+    resetColorsBtn.addEventListener('click', async () => {
+        await resetAllToDefault();
+    });
+}
     
     if (closeUpdateTab) {
         closeUpdateTab.addEventListener('click', () => {
