@@ -213,3 +213,4 @@ console.log('🕵️ Script de evasão stealth seguro ativado com sucesso');
 
 
 
+

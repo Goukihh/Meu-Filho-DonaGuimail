@@ -217,3 +217,4 @@ console.log('🧠 Manipulador de captcha inteligente ativado');
 
 
 
+
