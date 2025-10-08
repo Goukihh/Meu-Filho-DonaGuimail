@@ -160,6 +160,130 @@ function calculateAccountsPerPage() {
     console.log(`📱 Resolução: ${screenWidth}px - Largura disponível: ${availableWidth}px - Largura da aba: ${tabWidth}px - Gap: ${gap}px - Contas por página: ${ACCOUNTS_PER_PAGE}`);
 }
 
+// ========================================
+// FUNCIONALIDADES DE DRAG AND DROP
+// ========================================
+
+// Variáveis globais para drag and drop
+let draggedElement = null;
+let dragStartIndex = -1;
+
+// Configurar drag and drop para uma aba
+function setupDragAndDrop(tab) {
+    // Evento de início do drag
+    tab.addEventListener('dragstart', (e) => {
+        draggedElement = tab;
+        dragStartIndex = Array.from(avatarTabsContainer.children).indexOf(tab);
+        tab.classList.add('dragging');
+        
+        // Som de início do drag
+        if (window.audioManager) {
+            window.audioManager.playClick();
+        }
+        
+        console.log(`🔄 Iniciando drag da conta: ${tab.dataset.accountId}`);
+    });
+    
+    // Evento de fim do drag
+    tab.addEventListener('dragend', (e) => {
+        tab.classList.remove('dragging');
+        
+        // Remover todas as classes de drag
+        document.querySelectorAll('.avatar-tab').forEach(t => {
+            t.classList.remove('drag-over', 'drag-placeholder');
+        });
+        
+        draggedElement = null;
+        dragStartIndex = -1;
+        
+        console.log(`✅ Drag finalizado`);
+    });
+    
+    // Evento quando entra em uma área de drop
+    tab.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        if (tab !== draggedElement) {
+            tab.classList.add('drag-over');
+        }
+    });
+    
+    // Evento quando sai de uma área de drop
+    tab.addEventListener('dragleave', (e) => {
+        if (!tab.contains(e.relatedTarget)) {
+            tab.classList.remove('drag-over');
+        }
+    });
+    
+    // Evento de drag sobre uma área de drop
+    tab.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        if (tab !== draggedElement) {
+            tab.classList.add('drag-over');
+        }
+    });
+    
+    // Evento de drop
+    tab.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        tab.classList.remove('drag-over');
+        
+        if (draggedElement && draggedElement !== tab) {
+            const dropIndex = Array.from(avatarTabsContainer.children).indexOf(tab);
+            
+            console.log(`🎯 Drop realizado: de ${dragStartIndex} para ${dropIndex}`);
+            
+            // Reordenar contas no array
+            await reorderAccounts(dragStartIndex, dropIndex);
+            
+            // Som de sucesso
+            if (window.audioManager) {
+                window.audioManager.playSuccess();
+            }
+        }
+    });
+}
+
+// Reordenar contas
+async function reorderAccounts(fromIndex, toIndex) {
+    try {
+        console.log(`🔄 Reordenando contas: ${fromIndex} → ${toIndex}`);
+        
+        // Calcular índices reais no array de contas
+        const startIndex = currentPage * ACCOUNTS_PER_PAGE;
+        const realFromIndex = startIndex + fromIndex;
+        const realToIndex = startIndex + toIndex;
+        
+        // Verificar se os índices são válidos
+        if (realFromIndex < 0 || realFromIndex >= accounts.length || 
+            realToIndex < 0 || realToIndex >= accounts.length) {
+            console.error('❌ Índices inválidos para reordenação');
+            return;
+        }
+        
+        // Mover conta no array
+        const [movedAccount] = accounts.splice(realFromIndex, 1);
+        accounts.splice(realToIndex, 0, movedAccount);
+        
+        // Salvar nova ordem no backend
+        const result = await window.electron.invoke('reorder-accounts', {
+            fromIndex: realFromIndex,
+            toIndex: realToIndex
+        });
+        
+        if (result.success) {
+            console.log('✅ Contas reordenadas com sucesso');
+            // Re-renderizar apenas a página atual
+            renderAccounts();
+        } else {
+            console.error('❌ Erro ao reordenar contas:', result.message);
+            showNotification('Erro ao reordenar contas', 'error');
+        }
+    } catch (error) {
+        console.error('❌ Erro na reordenação:', error);
+        showNotification('Erro ao reordenar contas', 'error');
+    }
+}
+
 // Inicializar
 async function init() {
     console.log('🚀 Iniciando aplicação...');
@@ -209,19 +333,22 @@ async function init() {
 
 // Renderizar contas com paginação
 function renderAccounts() {
-    try {
-        console.log('🎨 Função renderAccounts iniciada');
-        console.log('📋 Contas para renderizar:', accounts.length);
-        console.log('📄 Página atual:', currentPage);
-        
-        if (!avatarTabsContainer) {
-            console.error('❌ Container de abas não encontrado');
-            return;
-        }
-        
-        // Limpar área antes de adicionar novas abas
-        avatarTabsContainer.innerHTML = '';
-        console.log('🧹 Container limpo');
+  try {
+    console.log('🎨 Função renderAccounts iniciada');
+    console.log('📋 Contas para renderizar:', accounts.length);
+    console.log('📄 Página atual:', currentPage);
+    
+    if (!avatarTabsContainer) {
+      console.error('❌ Container de abas não encontrado');
+      return;
+    }
+    
+    // Usar DocumentFragment para melhor performance
+    const fragment = document.createDocumentFragment();
+    
+    // Limpar área antes de adicionar novas abas
+    avatarTabsContainer.innerHTML = '';
+    console.log('🧹 Container limpo');
         
         if (accounts.length === 0) {
             console.log('⚠️ Nenhuma conta para renderizar');
@@ -249,12 +376,15 @@ function renderAccounts() {
             console.log(`🔧 Criando aba ${index + 1}/${accountsToShow.length} para: ${account.name}`);
             const tabElement = createAccountTab(account);
             if (tabElement) {
-                avatarTabsContainer.appendChild(tabElement);
+                fragment.appendChild(tabElement);
                 console.log(`✅ Aba criada para: ${account.name}`);
             } else {
                 console.error(`❌ Falha ao criar aba para: ${account.name}`);
             }
         });
+        
+        // Adicionar todas as abas de uma vez para melhor performance
+        avatarTabsContainer.appendChild(fragment);
         
         console.log(`✅ Renderização concluída: ${avatarTabsContainer.children.length} abas criadas`);
     } catch (error) {
@@ -329,6 +459,7 @@ function createAccountTab(account) {
         const tab = document.createElement('div');
         tab.className = `avatar-tab ${account.active ? 'active' : ''}`;
         tab.dataset.accountId = account.id;
+        tab.draggable = true; // Habilitar drag and drop
     
         // Círculo do avatar
         const avatarCircle = document.createElement('div');
@@ -401,6 +532,9 @@ function createAccountTab(account) {
             }
         });
         
+        // Event listeners para drag and drop
+        setupDragAndDrop(tab);
+        
         console.log(`✅ Aba criada com sucesso para: ${account.name}`);
         return tab;
     } catch (error) {
@@ -411,12 +545,18 @@ function createAccountTab(account) {
 
 // Manipular clique em conta
 async function handleAccountClick(accountId) {
+  try {
     // Atualizar estado ativo
     accounts = await window.electron.invoke('set-active-account', accountId);
     renderAccounts();
     
     // Trocar para a BrowserView da conta
     await window.electron.invoke('switch-account', accountId);
+  } catch (error) {
+    console.error('❌ Erro ao trocar conta:', error);
+    // Mostrar notificação de erro sem quebrar o app
+    showNotification('Erro ao trocar conta. Tente novamente.', 'error');
+  }
 }
 
 // Manipular menu de contexto
@@ -638,24 +778,30 @@ const closeAddAccountBtn = document.getElementById('close-add-account-tab');
 
 // Confirmar adição de conta
 confirmAddAccountBtn.addEventListener('click', async () => {
-    console.log(`🔧 Botão de adicionar conta clicado`);
-    const accountName = addAccountInput.value.trim();
-    console.log(`➕ Nome digitado: "${accountName}"`);
+    try {
+        console.log(`🔧 Botão de adicionar conta clicado`);
+        const accountName = addAccountInput.value.trim();
+        console.log(`➕ Nome digitado: "${accountName}"`);
 
-    if (!accountName) {
-        alert('Por favor, insira um nome para a conta.');
-        return;
+        if (!accountName) {
+            showNotification('Por favor, insira um nome para a conta.', 'error');
+            return;
+        }
+
+        console.log(`➕ Enviando adição de conta: ${accountName}`);
+        accounts = await window.electron.invoke('add-account', { 
+            name: accountName
+        });
+        renderAccounts();
+        addAccountTab.classList.remove('show');
+        // Restaurar BrowserView após fechar aba de adicionar conta
+        window.electron.send('context-menu-closed');
+        showNotification('Conta adicionada com sucesso!', 'success');
+        console.log(`✅ Nova conta criada com sucesso, BrowserView será restaurada`);
+    } catch (error) {
+        console.error('❌ Erro ao adicionar conta:', error);
+        showNotification('Erro ao adicionar conta. Tente novamente.', 'error');
     }
-
-    console.log(`➕ Enviando adição de conta: ${accountName}`);
-    accounts = await window.electron.invoke('add-account', { 
-        name: accountName
-    });
-    renderAccounts();
-    addAccountTab.classList.remove('show');
-    // Restaurar BrowserView após fechar aba de adicionar conta
-    window.electron.send('context-menu-closed');
-    console.log(`✅ Nova conta criada com sucesso, BrowserView será restaurada`);
 });
 
 // Cancelar adição de conta
@@ -1421,27 +1567,35 @@ if (primaryColorPicker) {
     });
 }
 
-// Limpeza de memória para performance
+// Limpeza suave de memória (apenas cache, SEM tocar em contas)
 function cleanupMemory() {
-    // Limpar cache de avatares antigos (manter apenas últimos 20)
-    if (avatarCache.size > 20) {
-        const entries = Array.from(avatarCache.entries());
-        const toRemove = entries.slice(0, entries.length - 20);
-        toRemove.forEach(([key]) => avatarCache.delete(key));
-        console.log('🧹 Cache de avatares limpo');
+  try {
+    // Limpar apenas cache de avatares muito antigos (manter últimos 200)
+    if (avatarCache && avatarCache.size > 200) {
+      const entries = Array.from(avatarCache.entries());
+      const toRemove = entries.slice(0, entries.length - 200);
+      toRemove.forEach(([key]) => avatarCache.delete(key));
+      console.log('🧹 Cache de avatares antigos limpo');
     }
     
-    // Limpar observadores de imagens não utilizadas
+    // Limpar apenas observadores de imagens realmente órfãs
     const observedImages = document.querySelectorAll('img[data-account-id]');
     observedImages.forEach(img => {
-        if (!img.isConnected) {
-            imageObserver.unobserve(img);
-        }
+      if (!img.isConnected) {
+        imageObserver.unobserve(img);
+      }
     });
+    
+    // NÃO REMOVER ELEMENTOS - manter tudo funcionando
+    
+    console.log('✅ Limpeza suave do renderer concluída');
+  } catch (error) {
+    console.error('❌ Erro na limpeza de memória do renderer:', error);
+  }
 }
 
-// Executar limpeza a cada 5 minutos
-setInterval(cleanupMemory, 5 * 60 * 1000);
+// Executar limpeza suave a cada 15 minutos (muito menos frequente)
+setInterval(cleanupMemory, 15 * 60 * 1000);
 
 if (applyColorsBtn) {
     applyColorsBtn.addEventListener('click', async () => {

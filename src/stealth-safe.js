@@ -146,33 +146,26 @@ window.chrome.csi = function() {};
 window.chrome.loadTimes = function() {};
 
 // ========================================
-// TÉCNICAS DE EVASÃO DE CAPTCHA (SUBTIS)
+// TÉCNICAS DISCORD-SAFE (SEM BLOQUEAR CAPTCHA)
 // ========================================
 
-// Em vez de bloquear, vamos mascarar de forma mais sutil
+// Apenas mascarar headers para parecer mais natural
 const originalFetch = window.fetch;
 window.fetch = function(...args) {
   const url = args[0];
   
-  // Apenas adicionar headers realistas, não bloquear
-  if (typeof url === 'string' && (
-    url.includes('hcaptcha.com') || 
-    url.includes('captcha') ||
-    url.includes('challenge')
-  )) {
-    // Adicionar headers realistas para parecer um navegador real
-    if (args[1]) {
-      args[1].headers = {
-        ...args[1].headers,
-        'User-Agent': navigator.userAgent,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1'
-      };
-    }
+  // Apenas adicionar headers realistas para TODAS as requisições
+  if (args[1] && args[1].headers) {
+    args[1].headers = {
+      ...args[1].headers,
+      'User-Agent': navigator.userAgent,
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1'
+    };
   }
   
   return originalFetch.apply(this, args);
@@ -208,6 +201,7 @@ setInterval(() => {
 }, 60000);
 
 console.log('🕵️ Script de evasão stealth seguro ativado com sucesso');
+
 
 
 

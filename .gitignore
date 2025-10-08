@@ -1,16 +1,251 @@
+# ========================================
+# MEU FILHO - GITIGNORE
+# ========================================
+
 # Dependências
-/node_modules
-
-# Arquivos de Build
-/dist
-/build
-*.exe
-
-# Logs
+node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Arquivos de Sistema
+# Builds
+dist/
+build/
+*.exe
+*.dmg
+*.deb
+*.rpm
+*.AppImage
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Grunt intermediate storage
+.grunt
+
+# Bower dependency directory
+bower_components
+
+# node-waf configuration
+.lock-wscript
+
+# Compiled binary addons
+build/Release
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env
+.env.test
+.env.production
+.env.local
+
+# parcel-bundler cache
+.cache
+.parcel-cache
+
+# Next.js build output
+.next
+
+# Nuxt.js build / generate output
+.nuxt
+dist
+
+# Gatsby files
+.cache/
+public
+
+# Storybook build outputs
+.out
+.storybook-out
+
+# Temporary folders
+tmp/
+temp/
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+
+# ========================================
+# PAINEL DE CONTROLE - NÃO SUBIR PARA GITHUB
+# ========================================
+
+# TODO O PAINEL DE CONTROLE (NÃO SUBIR PARA GITHUB)
+admin-panel/
+
+# ========================================
+# APP PRINCIPAL - DADOS DO USUÁRIO
+# ========================================
+
+# Dados das contas (NÃO SUBIR PARA GITHUB)
+accounts.json
+user-data/
+sessions/
+cache/
+
+# Logs do app
+app.log
+error.log
+debug.log
+
+# Configurações do usuário
+settings.json
+preferences.json
+user-config.json
+
+# ========================================
+# ARQUIVOS TEMPORÁRIOS
+# ========================================
+
+# Arquivos temporários do sistema
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Arquivos de cache
+.cache/
+cache/
+temp/
+
+# Arquivos de debug
+debug/
+logs/
+*.debug
+
+# ========================================
+# ARQUIVOS DE DESENVOLVIMENTO
+# ========================================
+
+# Arquivos de teste
+test-results/
+coverage/
+*.test.js
+*.spec.js
+
+# Arquivos de desenvolvimento
+dev/
+development/
+*.dev.js
+*.dev.json
+
+# Arquivos de configuração local
+local.json
+local.js
+config.local.json
+
+# ========================================
+# ARQUIVOS DE SEGURANÇA
+# ========================================
+
+# Chaves e certificados
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+
+# Arquivos de senha
+passwords.txt
+secrets.txt
+credentials.json
+
+# Arquivos de banco de dados
+*.db
+*.sqlite
+*.sqlite3
+
+# ========================================
+# ARQUIVOS DE BUILD E DISTRIBUIÇÃO
+# ========================================
+
+# Arquivos de build do Electron
+out/
+app/
+packages/
+
+# Arquivos de instalação
+*.msi
+*.exe
+*.dmg
+*.pkg
+*.deb
+*.rpm
+
+# Arquivos de atualização
+updates/
+releases/
+*.zip
+*.tar.gz
+
+# ========================================
+# ARQUIVOS DE DOCUMENTAÇÃO TEMPORÁRIA
+# ========================================
+
+# Documentação temporária
+docs/temp/
+docs/draft/
+*.draft.md
+*.temp.md
+
+# Arquivos de notas
+notes/
+*.note
+*.todo
+*.memo

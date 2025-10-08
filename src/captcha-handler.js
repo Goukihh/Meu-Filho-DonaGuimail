@@ -72,20 +72,17 @@ class CaptchaHandler {
     this.simulateHumanInteraction();
   }
 
-  // Mascarar elemento de captcha de forma sutil
+  // Mascarar elemento de captcha de forma MUITO sutil (Discord-safe)
   maskCaptchaElement(element) {
     try {
-      // Adicionar estilos para tornar menos visível
-      element.style.opacity = '0.1';
-      element.style.pointerEvents = 'none';
-      element.style.position = 'absolute';
-      element.style.left = '-9999px';
-      element.style.top = '-9999px';
+      // Apenas tornar menos visível, mas NÃO esconder completamente
+      element.style.opacity = '0.8';
+      element.style.pointerEvents = 'auto'; // Manter interação
       
       // Adicionar atributo para identificar
       element.setAttribute('data-captcha-masked', 'true');
       
-      console.log('🎭 Elemento captcha mascarado de forma sutil');
+      console.log('🎭 Elemento captcha mascarado de forma Discord-safe');
     } catch (error) {
       console.warn('⚠️ Erro ao mascarar captcha:', error);
     }
@@ -212,6 +209,7 @@ if (typeof window !== 'undefined') {
 }
 
 console.log('🧠 Manipulador de captcha inteligente ativado');
+
 
 
 

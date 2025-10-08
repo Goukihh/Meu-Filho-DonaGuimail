@@ -3,6 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const UserAgent = require('user-agents');
 const SimpleRemoteControl = require('./remote-control-simple');
+const PerformanceMonitor = require('./performance-monitor');
+const ErrorRecovery = require('./error-recovery');
+const BlockSystem = require('./block-system');
 // Auto-updater removido para evitar falsos alarmes do Windows Defender
 
 // Usar pasta de dados do usuário para persistência permanente
@@ -25,6 +28,9 @@ let isModalOpen = false; // Sinal de trânsito para controlar visibilidade da Br
 let isRenaming = false; // Controle para evitar recriação durante renomeação
 let isAddingAccount = false; // Controle para evitar recriação durante adição de conta
 let remoteControl = null; // Sistema de controle remoto simples
+let performanceMonitor = null; // Monitor de performance
+let errorRecovery = null; // Sistema de recuperação de erros
+let blockSystem = null; // Sistema de bloqueio permanente
 
 // Contas padrão
 const defaultAccounts = [
@@ -76,6 +82,23 @@ function readAccounts() {
 
 function writeAccounts(accountsToSave) {
   try {
+    // SISTEMA DE BACKUP AUTOMÁTICO
+    const backupPath = path.join(userDataPath, 'accounts-backup.json');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const timestampedBackup = path.join(userDataPath, `accounts-backup-${timestamp}.json`);
+    
+    // Criar backup antes de salvar
+    if (fs.existsSync(accountsFilePath)) {
+      try {
+        const currentData = fs.readFileSync(accountsFilePath, 'utf8');
+        fs.writeFileSync(backupPath, currentData);
+        fs.writeFileSync(timestampedBackup, currentData);
+        console.log('💾 Backup automático criado');
+      } catch (backupError) {
+        console.log('⚠️ Erro ao criar backup:', backupError.message);
+      }
+    }
+    
     fs.writeFileSync(accountsFilePath, JSON.stringify(accountsToSave, null, 2));
     console.log('💾 Contas salvas no arquivo:', accountsToSave.length);
     return true;
@@ -261,43 +284,62 @@ async function initializeSessions() {
   }
 }
 
-// Cache inteligente: Pré-carregar sessões mais usadas
+// Cache inteligente: Pré-carregar sessões mais usadas (OTIMIZADO)
 async function preloadFrequentSessions() {
   try {
     console.log('⚡ Iniciando pré-carregamento de sessões frequentes...');
     
-    // Carregar apenas as primeiras 3 contas ativas para performance
-    const activeAccounts = accounts.filter(acc => acc.active).slice(0, 3);
+    // OTIMIZAÇÃO: Carregar apenas 1 conta ativa para reduzir uso de memória
+    const activeAccounts = accounts.filter(acc => acc.active).slice(0, 1);
     
-    for (const account of activeAccounts) {
+    // Processar de forma assíncrona para não bloquear
+    const promises = activeAccounts.map(async (account) => {
       if (!sessionMap.has(account.id)) {
         console.log(`🚀 Pré-carregando sessão para: ${account.name}`);
         await initializeSessionForAccount(account);
       }
-    }
+    });
     
+    await Promise.all(promises);
     console.log('✅ Pré-carregamento concluído');
   } catch (error) {
     console.error('❌ Erro no pré-carregamento:', error);
   }
 }
 
-// Função para limpeza suave (apenas cache, SEM tocar em contas/sessões)
+// Função para limpeza suave (OTIMIZADA)
 function cleanupMemory() {
   try {
-    // Limpar apenas cache de avatares muito antigos (manter últimos 100)
-    if (avatarCache && avatarCache.size > 100) {
+    // OTIMIZAÇÃO: Limpar cache de avatares mais agressivamente
+    if (avatarCache && avatarCache.size > 50) {
       const entries = Array.from(avatarCache.entries());
-      const toRemove = entries.slice(0, entries.length - 100);
+      const toRemove = entries.slice(0, entries.length - 50);
       toRemove.forEach(([key]) => avatarCache.delete(key));
-      console.log('🧹 Cache de avatares antigos limpo');
+      console.log('🧹 Cache de avatares otimizado');
     }
     
-    // NÃO LIMPAR SESSÕES - todas devem ser mantidas
-    // NÃO LIMPAR CONTAS - todas devem ser mantidas
-    // NÃO LIMPAR BROWSERVIEWS - todas devem ser mantidas
+    // OTIMIZAÇÃO: Limpar sessões inativas (não usadas há mais de 30 minutos)
+    const now = Date.now();
+    const thirtyMinutesAgo = now - (30 * 60 * 1000);
     
-    console.log('✅ Limpeza suave concluída (contas e sessões preservadas)');
+    for (const [accountId, session] of sessionMap.entries()) {
+      const account = accounts.find(acc => acc.id === accountId);
+      if (account && !account.active) {
+        // Verificar se a sessão não foi usada recentemente
+        const lastUsed = account.lastUsed || 0;
+        if (lastUsed < thirtyMinutesAgo) {
+          try {
+            session.clearStorageData();
+            sessionMap.delete(accountId);
+            console.log(`🧹 Sessão inativa removida: ${account.name}`);
+          } catch (error) {
+            console.log(`⚠️ Erro ao limpar sessão ${account.name}:`, error.message);
+          }
+        }
+      }
+    }
+    
+    console.log('✅ Limpeza otimizada concluída');
   } catch (error) {
     console.error('❌ Erro na limpeza de memória:', error);
   }
@@ -306,7 +348,36 @@ function cleanupMemory() {
 // Executar limpeza suave a cada 10 minutos (menos frequente)
 setInterval(cleanupMemory, 10 * 60 * 1000);
 
-// Carregar contas do armazenamento (usando fs) - OTIMIZADO
+// Limpeza de backups antigos a cada hora
+setInterval(() => {
+  try {
+    const backupFiles = fs.readdirSync(userDataPath)
+      .filter(file => file.startsWith('accounts-backup-') && file.endsWith('.json'))
+      .map(file => ({
+        name: file,
+        path: path.join(userDataPath, file),
+        time: fs.statSync(path.join(userDataPath, file)).mtime
+      }))
+      .sort((a, b) => b.time - a.time);
+    
+    // Manter apenas os últimos 5 backups
+    if (backupFiles.length > 5) {
+      const toDelete = backupFiles.slice(5);
+      toDelete.forEach(backup => {
+        try {
+          fs.unlinkSync(backup.path);
+          console.log(`🧹 Backup antigo removido: ${backup.name}`);
+        } catch (error) {
+          console.log(`⚠️ Erro ao remover backup ${backup.name}:`, error.message);
+        }
+      });
+    }
+  } catch (error) {
+    console.log('⚠️ Erro na limpeza de backups:', error.message);
+  }
+}, 60 * 60 * 1000); // A cada hora
+
+// Carregar contas do armazenamento (SUPER OTIMIZADO)
 async function loadAccounts() {
   try {
     if (fs.existsSync(accountsFilePath)) {
@@ -314,15 +385,26 @@ async function loadAccounts() {
       accounts = JSON.parse(data);
       console.log(`📱 ${accounts.length} contas carregadas do arquivo.`);
       
-      // Otimização: Pré-processar contas para melhor performance
-      accounts.forEach(account => {
-        if (account.id && !account.avatar) {
-          account.avatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
+      // OTIMIZAÇÃO: Processar contas em lotes para melhor performance
+      const batchSize = 10;
+      for (let i = 0; i < accounts.length; i += batchSize) {
+        const batch = accounts.slice(i, i + batchSize);
+        batch.forEach((account, index) => {
+          const globalIndex = i + index;
+          if (account.id && !account.avatar) {
+            account.avatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
+          }
+          if (!account.active) account.active = false;
+          if (!account.name) account.name = `Conta ${globalIndex + 1}`;
+          // Adicionar timestamp de uso
+          if (!account.lastUsed) account.lastUsed = Date.now();
+        });
+        
+        // Pequena pausa entre lotes para não bloquear a UI
+        if (i + batchSize < accounts.length) {
+          await new Promise(resolve => setTimeout(resolve, 10));
         }
-        // Garantir que todas as contas tenham propriedades essenciais
-        if (!account.active) account.active = false;
-        if (!account.name) account.name = `Conta ${accounts.indexOf(account) + 1}`;
-      });
+      }
     } else {
       accounts = defaultAccounts;
       console.log('Usando contas padrão, arquivo não encontrado.');
@@ -332,15 +414,19 @@ async function loadAccounts() {
     accounts = defaultAccounts;
   }
   
-  // Otimização: Inicializar sessões de forma assíncrona e não-bloqueante
-  setImmediate(() => {
-    initializeSessions();
-  });
+  // OTIMIZAÇÃO: Inicializar apenas contas ativas primeiro
+  const activeAccounts = accounts.filter(acc => acc.active);
+  if (activeAccounts.length > 0) {
+    console.log(`🚀 Inicializando ${activeAccounts.length} contas ativas primeiro...`);
+    setImmediate(() => {
+      initializeSessions();
+    });
+  }
   
-  // Cache inteligente: Pré-carregar sessões mais usadas
+  // Cache inteligente: Pré-carregar apenas 1 sessão
   setTimeout(() => {
     preloadFrequentSessions();
-  }, 2000);
+  }, 1000);
 }
 
 // Função saveAccounts removida - usar writeAccounts(accounts) em seu lugar
@@ -392,20 +478,6 @@ function createBrowserView(accountId) {
       const testEvasionScript = fs.readFileSync(path.join(__dirname, 'test-evasion.js'), 'utf8');
       view.webContents.executeJavaScript(testEvasionScript);
     }, 2000);
-    
-    // Tentar restaurar localStorage se disponível (para contas importadas)
-    setTimeout(() => {
-      try {
-        const account = accounts.find(acc => acc.id === accountId);
-        if (account && account.sessionData && account.sessionData.localStorage) {
-          console.log(`🔄 Tentando restaurar localStorage para: ${accountId}`);
-          // Nota: localStorage será restaurado automaticamente pelo Electron
-          // quando a sessão for carregada
-        }
-      } catch (error) {
-        console.log(`⚠️ Erro ao restaurar localStorage: ${error.message}`);
-      }
-    }, 3000);
     
     console.log(`🕵️ Manipulador de captcha executado para: ${accountId}`);
     
@@ -986,39 +1058,11 @@ ipcMain.handle('add-account', async (event, accountData) => {
   // Criar e trocar para a BrowserView da nova conta
   switchToBrowserView(newAccount.id);
   
+  // LIBERAR recriação após adicionar conta
+  isAddingAccount = false;
+  console.log(`🔓 Adição de conta concluída - recriação liberada`);
   console.log(`✅ Nova conta criada: ${newAccount.name} (${newAccount.id})`);
   return accounts;
-});
-
-// Handler para reordenar contas
-ipcMain.handle('reorder-accounts', async (event, { fromIndex, toIndex }) => {
-  try {
-    console.log(`🔄 Reordenando contas: ${fromIndex} → ${toIndex}`);
-    
-    // Verificar se os índices são válidos
-    if (fromIndex < 0 || fromIndex >= accounts.length || 
-        toIndex < 0 || toIndex >= accounts.length) {
-      console.error('❌ Índices inválidos para reordenação');
-      return { success: false, message: 'Índices inválidos' };
-    }
-    
-    // Mover conta no array
-    const [movedAccount] = accounts.splice(fromIndex, 1);
-    accounts.splice(toIndex, 0, movedAccount);
-    
-    // Salvar nova ordem
-    const saved = writeAccounts(accounts);
-    if (saved) {
-      console.log(`✅ Contas reordenadas com sucesso: ${fromIndex} → ${toIndex}`);
-      return { success: true, message: 'Contas reordenadas com sucesso' };
-    } else {
-      console.error('❌ Erro ao salvar nova ordem das contas');
-      return { success: false, message: 'Erro ao salvar nova ordem' };
-    }
-  } catch (error) {
-    console.error('❌ Erro na reordenação:', error);
-    return { success: false, message: 'Erro interno na reordenação' };
-  }
 });
 
 // Listener para executar renomeação
@@ -1216,6 +1260,50 @@ ipcMain.handle('open-download-page', (event, downloadUrl) => {
   return true;
 });
 
+// Handler para obter relatório de performance
+ipcMain.handle('get-performance-report', () => {
+  if (performanceMonitor) {
+    return performanceMonitor.getPerformanceReport();
+  }
+  return null;
+});
+
+// Handler para obter estatísticas de erro
+ipcMain.handle('get-error-stats', () => {
+  if (errorRecovery) {
+    return errorRecovery.getErrorStats();
+  }
+  return null;
+});
+
+// Handler para bloquear usuário permanentemente
+ipcMain.handle('block-user', (event, reason) => {
+  if (blockSystem) {
+    const success = blockSystem.blockUser(reason);
+    console.log(`🚫 Usuário bloqueado: ${success ? 'SUCESSO' : 'FALHA'}`);
+    return { success, hardwareId: blockSystem.hardwareId };
+  }
+  return { success: false, error: 'Sistema de bloqueio não disponível' };
+});
+
+// Handler para desbloquear usuário
+ipcMain.handle('unblock-user', () => {
+  if (blockSystem) {
+    const success = blockSystem.unblockUser();
+    console.log(`✅ Usuário desbloqueado: ${success ? 'SUCESSO' : 'FALHA'}`);
+    return { success };
+  }
+  return { success: false, error: 'Sistema de bloqueio não disponível' };
+});
+
+// Handler para obter informações do hardware
+ipcMain.handle('get-hardware-info', () => {
+  if (blockSystem) {
+    return blockSystem.getHardwareInfo();
+  }
+  return null;
+});
+
 // ========================================
 // FUNCIONALIDADES DE FUNDO PERSONALIZADO
 // ========================================
@@ -1371,10 +1459,6 @@ ipcMain.handle('reset-custom-color', async () => {
 // FUNCIONALIDADES DE IMPORTAR/EXPORTAR CONTAS
 // ========================================
 
-// Sistema de exportar/importar simplificado
-// As sessões do Discord são preservadas automaticamente pelo Electron
-// através das partições persistentes (persist:discord-${accountId})
-
 // Exportar contas para arquivo JSON
 ipcMain.handle('export-accounts', async () => {
   try {
@@ -1389,16 +1473,14 @@ ipcMain.handle('export-accounts', async () => {
     });
 
     if (!result.canceled && result.filePath) {
-      // Exportar dados das contas (versão simplificada)
       const exportData = {
-        version: '1.2.4',
+        version: '1.2.1',
         exportDate: new Date().toISOString(),
         accounts: accounts.map(account => ({
           id: account.id,
           name: account.name,
           avatar: account.avatar,
-          active: account.active,
-          profilePicture: account.profilePicture
+          active: account.active
         }))
       };
 
@@ -1435,12 +1517,11 @@ ipcMain.handle('import-accounts', async () => {
         return { success: false, message: 'Arquivo inválido: formato de contas não encontrado' };
       }
 
-      // Validar e processar contas importadas (versão simplificada)
+      // Validar e processar contas importadas
       const importedAccounts = importData.accounts.map((account, index) => ({
-        id: `imported-${Date.now()}-${index}`,
+        id: account.id || `imported-${Date.now()}-${index}`,
         name: account.name || `Conta Importada ${index + 1}`,
         avatar: account.avatar || null,
-        profilePicture: account.profilePicture || null,
         active: false // Contas importadas começam inativas
       }));
 
@@ -1465,558 +1546,144 @@ ipcMain.handle('import-accounts', async () => {
   }
 });
 
+    // SISTEMA DE BLOQUEIO DESATIVADO TEMPORARIAMENTE
+    console.log('ℹ️ Sistema de bloqueio desativado para correção');
+
 // Eventos do app
 app.whenReady().then(async () => {
-  // Verificar se app está bloqueado (dupla verificação)
-  const fs = require('fs');
-  const path = require('path');
-  const blockFile = path.join(process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + '/.local/share'), 'meu-filho', 'BLOCKED.txt');
-  
-  // Verificação 1: Arquivo local
-  if (fs.existsSync(blockFile)) {
-    try {
-      const blockData = JSON.parse(fs.readFileSync(blockFile, 'utf8'));
-      if (blockData.blocked) {
-        // Verificar se há comando de desbloqueio pendente no servidor
-        console.log('🚫 Usuário bloqueado localmente, verificando desbloqueio no servidor...');
-        
-        // Verificar se há comando de desbloqueio pendente
-        const https = require('https');
-        const crypto = require('crypto');
-        const os = require('os');
-        
-        // Gerar hardware ID
-        const networkInterfaces = os.networkInterfaces();
-        let macAddress = '';
-        for (const interfaceName in networkInterfaces) {
-          const interfaces = networkInterfaces[interfaceName];
-          for (const iface of interfaces) {
-            if (iface.mac && iface.mac !== '00:00:00:00:00:00') {
-              macAddress = iface.mac;
+  // SISTEMA DE BLOQUEIO DESATIVADO TEMPORARIAMENTE
+  console.log('ℹ️ Sistema de bloqueio desativado para correção');
+    
+    // SISTEMA DE BLOQUEIO DESATIVADO - PULAR VERIFICAÇÕES
+    let isBlocked = false;
+    let blockInfo = null;
+    
+    // Verificação 1: Sistema de bloqueio - DESATIVADO
+    // if (blockSystem.isHardwareBlocked()) {
+    //   isBlocked = true;
+    //   blockInfo = blockSystem.isBlocked();
+    // }
+    
+    // Verificação 2: Verificação direta de arquivos (backup) - DESATIVADO
+    if (false) { // DESATIVADO
+      const fs = require('fs');
+      const path = require('path');
+      const crypto = require('crypto');
+      const os = require('os');
+      
+      // Gerar hardware ID novamente para verificação
+      const hardwareString = JSON.stringify({
+        platform: process.platform,
+        arch: process.arch,
+        cpus: os.cpus().length,
+        totalmem: os.totalmem(),
+        hostname: os.hostname(),
+        userInfo: os.userInfo().username
+      });
+      const hardwareId = crypto.createHash('sha256').update(hardwareString).digest('hex').substring(0, 16);
+      
+      // Verificar TODOS os locais possíveis
+      const blockLocations = [
+        path.join(process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + '/.local/share'), 'meu-filho', 'BLOCKED.txt'),
+        path.join(process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + '/.local/share'), 'meu-filho', 'BLOCKED_BACKUP.txt'),
+        path.join(app.getPath('userData'), 'BLOCKED.txt'),
+        path.join(process.cwd(), 'BLOCKED.txt'),
+        path.join(os.homedir(), 'BLOCKED.txt'),
+        path.join(process.env.TEMP || '/tmp', 'meu-filho-blocked.txt'),
+        ...(process.platform === 'win32' ? [
+          path.join(process.env.USERPROFILE, 'BLOCKED.txt'),
+          path.join(process.env.LOCALAPPDATA, 'meu-filho', 'BLOCKED.txt'),
+          path.join('C:\\Windows\\Temp', 'meu-filho-blocked.txt')
+        ] : [])
+      ];
+      
+      for (const blockFile of blockLocations) {
+        if (fs.existsSync(blockFile)) {
+          try {
+            const blockData = JSON.parse(fs.readFileSync(blockFile, 'utf8'));
+            if (blockData.blocked && blockData.hardwareId === hardwareId) {
+              isBlocked = true;
+              blockInfo = blockData;
+              console.log(`🚫 BLOQUEIO DETECTADO em: ${blockFile}`);
               break;
             }
-          }
-          if (macAddress) break;
-        }
-        
-        const hardwareInfo = {
-          mac: macAddress,
-          platform: os.platform(),
-          arch: os.arch(),
-          hostname: os.hostname(),
-          cpus: os.cpus().length,
-          totalmem: os.totalmem(),
-          userInfo: os.userInfo().username
-        };
-        
-        const hardwareString = JSON.stringify(hardwareInfo);
-        const hardwareId = crypto.createHash('sha256').update(hardwareString).digest('hex').substring(0, 16);
-        
-        // Verificar comandos de desbloqueio
-        const checkUnban = await new Promise((resolve) => {
-          const postData = JSON.stringify({ userId: hardwareId });
-          const options = {
-            hostname: 'localhost',
-            port: 3000,
-            path: '/api/check-commands',
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Content-Length': Buffer.byteLength(postData)
-            },
-            timeout: 3000
-          };
-          
-          const req = require('http').request(options, (res) => {
-            let responseData = '';
-            res.on('data', (chunk) => { responseData += chunk; });
-            res.on('end', () => {
-              try {
-                const result = JSON.parse(responseData);
-                const unbanCommands = result.commands?.filter(cmd => 
-                  cmd.type === 'clear_block_file' && !cmd.executed
-                ) || [];
-                resolve(unbanCommands.length > 0);
-              } catch (error) {
-                resolve(false);
-              }
-            });
-          });
-          
-          req.on('error', () => resolve(false));
-          req.on('timeout', () => {
-            req.destroy();
-            resolve(false);
-          });
-          
-          req.setTimeout(3000);
-          req.write(postData);
-          req.end();
-        });
-        
-        if (checkUnban) {
-          console.log('✅ Comando de desbloqueio encontrado, removendo arquivo de bloqueio...');
-          fs.unlinkSync(blockFile);
-          console.log('✅ Arquivo de bloqueio removido, continuando inicialização...');
-          
-           // Restaurar backup de contas se existir (SISTEMA ULTRA-ROBUSTO)
-           try {
-             console.log('🔄 Iniciando restauração de contas após desbloqueio...');
-             
-             // Forçar salvamento das contas atuais antes de restaurar
-             if (typeof writeAccounts === 'function' && accounts) {
-               writeAccounts(accounts);
-               console.log('💾 Contas atuais salvas antes da restauração');
-             }
-             
-             const userDataPath = app.getPath('userData');
-             const accountsPath = path.join(userDataPath, 'accounts.json');
-             
-             // Lista de locais de backup para tentar restaurar
-             const backupLocations = [
-               path.join(userDataPath, 'accounts-backup-before-ban.json'),
-               path.join(require('os').homedir(), 'Documents', 'meu-filho-backup.json'),
-               path.join(require('os').homedir(), 'Desktop', 'meu-filho-backup.json'),
-               path.join(process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + '/.local/share'), 'meu-filho-backup.json'),
-               path.join(require('os').homedir(), 'meu-filho-backup.json')
-             ];
-             
-             let restored = false;
-             
-             for (const backupPath of backupLocations) {
-               try {
-                 if (fs.existsSync(backupPath)) {
-                   console.log(`🔍 Tentando restaurar de: ${backupPath}`);
-                   
-                   const backupData = fs.readFileSync(backupPath, 'utf8');
-                   const backup = JSON.parse(backupData);
-                   
-                   if (backup.accounts && Array.isArray(backup.accounts)) {
-                     fs.writeFileSync(accountsPath, JSON.stringify(backup.accounts, null, 2));
-                     console.log(`✅ ${backup.accounts.length} contas restauradas do backup: ${backupPath}`);
-                     restored = true;
-                     break;
-                   }
-                 }
-               } catch (error) {
-                 console.log(`⚠️ Erro ao restaurar de ${backupPath}: ${error.message}`);
-               }
-             }
-             
-             if (!restored) {
-               console.log('⚠️ Nenhum backup válido encontrado, mantendo contas atuais');
-               
-               // Garantir que arquivo de contas existe
-               if (!fs.existsSync(accountsPath)) {
-                 fs.writeFileSync(accountsPath, JSON.stringify([], null, 2));
-                 console.log('📝 Arquivo de contas vazio criado');
-               }
-             }
-             
-           } catch (error) {
-             console.log('⚠️ Erro ao restaurar backup:', error);
-           }
-        } else {
-          const { dialog } = require('electron');
-          dialog.showMessageBoxSync(null, {
-            type: 'error',
-            buttons: ['OK'],
-            title: 'Meu Filho - Acesso Negado',
-            message: 'Seu acesso ao app foi desativado pelo administrador.',
-            detail: `Motivo: ${blockData.reason}\n\nData: ${new Date(blockData.timestamp).toLocaleString('pt-BR')}\n\nO app foi bloqueado permanentemente.`
-          });
-          app.quit();
-          return;
-        }
-      }
-    } catch (error) {
-      console.error('❌ Erro ao verificar bloqueio local:', error);
-    }
-  } else {
-    // MODO OFFLINE: Verificar servidor apenas se disponível (timeout rápido)
-    console.log('🔍 Verificando servidor (modo offline)...');
-    
-    const crypto = require('crypto');
-    const os = require('os');
-    
-    // Gerar hardware ID
-    const networkInterfaces = os.networkInterfaces();
-    let macAddress = '';
-    for (const interfaceName in networkInterfaces) {
-      const interfaces = networkInterfaces[interfaceName];
-      for (const iface of interfaces) {
-        if (iface.mac && iface.mac !== '00:00:00:00:00:00') {
-          macAddress = iface.mac;
-          break;
-        }
-      }
-      if (macAddress) break;
-    }
-    
-    const hardwareInfo = {
-      mac: macAddress,
-      platform: os.platform(),
-      arch: os.arch(),
-      hostname: os.hostname(),
-      cpus: os.cpus().length,
-      totalmem: os.totalmem(),
-      userInfo: os.userInfo().username
-    };
-    
-    const hardwareString = JSON.stringify(hardwareInfo);
-    const hardwareId = crypto.createHash('sha256').update(hardwareString).digest('hex').substring(0, 16);
-    
-    // Verificar servidor com timeout muito rápido (1 segundo)
-    const serverCheck = await new Promise((resolve) => {
-      const postData = JSON.stringify({ hardwareId: hardwareId });
-      const options = {
-        hostname: 'localhost',
-        port: 3000,
-        path: '/api/check-blocked',
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(postData)
-        },
-        timeout: 1000 // Timeout de apenas 1 segundo
-      };
-      
-      const req = require('http').request(options, (res) => {
-        let responseData = '';
-        res.on('data', (chunk) => { responseData += chunk; });
-        res.on('end', () => {
-          try {
-            const result = JSON.parse(responseData);
-            resolve({ available: true, blocked: result.blocked === true, data: result });
           } catch (error) {
-            resolve({ available: false, blocked: false });
+            console.log(`⚠️ Erro ao verificar bloqueio em ${blockFile}:`, error.message);
           }
-        });
-      });
-      
-      req.on('error', () => {
-        console.log('📡 Servidor offline - continuando em modo local');
-        resolve({ available: false, blocked: false });
-      });
-      
-      req.on('timeout', () => {
-        console.log('📡 Servidor lento - continuando em modo local');
-        req.destroy();
-        resolve({ available: false, blocked: false });
-      });
-      
-      req.setTimeout(1000);
-      req.write(postData);
-      req.end();
-    });
+        }
+      }
+    }
     
-    // Se servidor está online e usuário está bloqueado
-    if (serverCheck.available && serverCheck.blocked) {
-      console.log('🚫 Usuário bloqueado no servidor, recriando arquivo de bloqueio...');
-      
-      // Recriar arquivo de bloqueio
-      const blockData = {
-        blocked: true,
-        reason: serverCheck.data.reason || 'Bloqueio detectado no servidor',
-        timestamp: Date.now(),
-        hardwareId: hardwareId,
-        serverEnforced: true
-      };
-      
-      fs.writeFileSync(blockFile, JSON.stringify(blockData, null, 2));
-      console.log('🚫 Arquivo de bloqueio recriado pelo servidor');
-      
+    // Se bloqueado, BLOQUEAR IMEDIATAMENTE
+    if (isBlocked) {
+      console.log('🚫 HARDWARE BLOQUEADO - ACESSO NEGADO');
       const { dialog } = require('electron');
       dialog.showMessageBoxSync(null, {
         type: 'error',
         buttons: ['OK'],
-        title: 'Meu Filho - Acesso Negado',
-        message: 'Seu acesso ao app foi desativado pelo administrador.',
-        detail: '🚫 BLOQUEIO ENFORÇADO PELO SERVIDOR\n\nO arquivo de bloqueio foi recriado automaticamente.\n\nApenas o administrador pode desbloquear sua conta.'
+        title: 'Meu Filho - ACESSO PERMANENTEMENTE NEGADO',
+        message: 'Seu acesso ao app foi BLOQUEADO PERMANENTEMENTE pelo administrador.',
+        detail: `🚫 BLOQUEIO POR HARDWARE\n\nMotivo: ${blockInfo.reason}\nData: ${new Date(blockInfo.timestamp).toLocaleString('pt-BR')}\nHardware ID: ${blockSystem.hardwareId}\n\nEste bloqueio é PERMANENTE e não pode ser removido.\nApenas o administrador pode desbloquear.`
       });
+      
+      // FORÇAR SAÍDA IMEDIATA
       app.quit();
+      process.exit(1);
       return;
     }
     
-    // Se servidor está offline, continuar normalmente (modo offline)
-    if (!serverCheck.available) {
-      console.log('📡 Modo offline ativado - app funcionará normalmente');
-    }
-    // Sistema de backup desativado para evitar sobrescrever contas atuais
-    console.log('📝 Sistema de backup automático desativado para preservar contas atuais');
+    console.log('✅ Hardware não está bloqueado - acesso liberado');
+  } catch (error) {
+    console.error('❌ Erro no sistema de bloqueio:', error);
+    // Em caso de erro, BLOQUEAR por segurança
+    console.log('🚫 Erro no sistema - bloqueando por segurança');
+    app.quit();
+    return;
   }
   
-          // Verificação 2: Servidor (sistema híbrido - local + servidor)
-          try {
-            const https = require('https');
-            const crypto = require('crypto');
-            const os = require('os');
-            
-            // Gerar hardware ID
-            const networkInterfaces = os.networkInterfaces();
-            let macAddress = '';
-            for (const interfaceName in networkInterfaces) {
-              const interfaces = networkInterfaces[interfaceName];
-              for (const iface of interfaces) {
-                if (iface.mac && iface.mac !== '00:00:00:00:00:00') {
-                  macAddress = iface.mac;
-                  break;
-                }
-              }
-              if (macAddress) break;
-            }
-            
-            const hardwareInfo = {
-              mac: macAddress,
-              platform: os.platform(),
-              arch: os.arch(),
-              hostname: os.hostname(),
-              cpus: os.cpus().length,
-              totalmem: os.totalmem(),
-              userInfo: os.userInfo().username
-            };
-            
-            const hardwareString = JSON.stringify(hardwareInfo);
-            const hardwareId = crypto.createHash('sha256').update(hardwareString).digest('hex').substring(0, 16);
-            
-            // Verificar bloqueio no servidor (com timeout curto)
-            const checkBlocked = await new Promise((resolve) => {
-              const postData = JSON.stringify({ hardwareId: hardwareId });
-              const options = {
-                hostname: 'localhost',
-                port: 3000,
-                path: '/api/check-blocked',
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Content-Length': Buffer.byteLength(postData)
-                },
-                timeout: 2000 // 2 segundos de timeout (mais rápido)
-              };
-              
-              const req = require('http').request(options, (res) => {
-                let responseData = '';
-                res.on('data', (chunk) => { responseData += chunk; });
-                res.on('end', () => {
-                  try {
-                    const result = JSON.parse(responseData);
-                    resolve(result);
-                  } catch (error) {
-                    console.log('⚠️ Erro ao parsear resposta do servidor:', error);
-                    resolve({ blocked: false });
-                  }
-                });
-              });
-              
-              req.on('error', (error) => {
-                console.log('⚠️ Servidor offline - usando apenas verificação local');
-                resolve({ blocked: false });
-              });
-              
-              req.on('timeout', () => {
-                console.log('⚠️ Servidor lento - usando apenas verificação local');
-                req.destroy();
-                resolve({ blocked: false });
-              });
-              
-              req.setTimeout(2000);
-              req.write(postData);
-              req.end();
-            });
-            
-            if (checkBlocked.blocked) {
-              const { dialog } = require('electron');
-              dialog.showMessageBoxSync(null, {
-                type: 'error',
-                buttons: ['OK'],
-                title: 'Meu Filho - Acesso Negado',
-                message: 'Seu acesso ao app foi desativado pelo administrador.',
-                detail: `Motivo: ${checkBlocked.reason}\n\nData: ${new Date(checkBlocked.blockedAt).toLocaleString('pt-BR')}\n\nO app foi bloqueado permanentemente no servidor.`
-              });
-              app.quit();
-              return;
-            }
-          } catch (error) {
-            console.log('⚠️ Verificação de bloqueio no servidor não disponível - usando apenas verificação local');
-          }
+  // Se não há bloqueio, verificar se há backup para restaurar
+  try {
+    const backupPath = path.join(app.getPath('userData'), 'accounts-backup.json');
+    const accountsPath = path.join(app.getPath('userData'), 'accounts.json');
+    
+    if (fs.existsSync(backupPath) && (!fs.existsSync(accountsPath) || fs.readFileSync(accountsPath, 'utf8').trim() === '[]')) {
+      console.log('🔄 Restaurando contas do backup...');
+      const backupData = fs.readFileSync(backupPath, 'utf8');
+      fs.writeFileSync(accountsPath, backupData, 'utf8');
+      console.log('✅ Contas restauradas do backup!');
+    }
+  } catch (error) {
+    console.log('⚠️ Erro ao restaurar backup:', error);
+  }
   
-   // Inicializar sistema de controle remoto simples
-   try {
-     remoteControl = new SimpleRemoteControl();
-     console.log('🔐 Sistema de controle remoto inicializado');
-     
-     // Iniciar heartbeat para conectar ao painel
-     remoteControl.startHeartbeat();
-     console.log('🔐 Heartbeat iniciado - conectando ao painel de controle');
-     
-     // SISTEMA DE BACKUP AUTOMÁTICO PERIÓDICO
-     setInterval(() => {
-       try {
-         if (accounts && accounts.length > 0) {
-           console.log('💾 Backup automático das contas...');
-           writeAccounts(accounts);
-           
-           // Backup adicional em locais externos
-           const os = require('os');
-           const userDataPath = app.getPath('userData');
-           const backupData = {
-             timestamp: Date.now(),
-             date: new Date().toISOString(),
-             accounts: accounts,
-             version: '1.2.4',
-             backupType: 'automatic'
-           };
-           
-           const backupLocations = [
-             path.join(userDataPath, 'auto-backup.json'),
-             path.join(os.homedir(), 'Documents', 'meu-filho-auto-backup.json'),
-             path.join(os.homedir(), 'Desktop', 'meu-filho-auto-backup.json')
-           ];
-           
-           for (const backupPath of backupLocations) {
-             try {
-               const dir = path.dirname(backupPath);
-               if (!fs.existsSync(dir)) {
-                 fs.mkdirSync(dir, { recursive: true });
-               }
-               fs.writeFileSync(backupPath, JSON.stringify(backupData, null, 2));
-             } catch (error) {
-               console.log(`⚠️ Erro no backup automático em ${backupPath}: ${error.message}`);
-             }
-           }
-           
-           console.log('✅ Backup automático concluído');
-         }
-       } catch (error) {
-         console.log('⚠️ Erro no backup automático:', error.message);
-       }
-     }, 300000); // Backup a cada 5 minutos
+  // Sistema de bloqueio agora é 100% offline - não precisa de verificação de servidor
+  
+  // Inicializar sistema de controle remoto simples
+  try {
+    remoteControl = new SimpleRemoteControl();
+    console.log('🔐 Sistema de controle remoto inicializado');
     
-    // Verificação periódica de bloqueio (modo inteligente)
-    let serverOfflineCount = 0;
-    let checkInterval = 30000; // Começar com 30 segundos
-    
-    setInterval(async () => {
-      try {
-        const fs = require('fs');
-        const path = require('path');
-        const blockFile = path.join(process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + '/.local/share'), 'meu-filho', 'BLOCKED.txt');
-        
-        // Se não há arquivo local, verificar servidor (apenas se não estiver offline há muito tempo)
-        if (!fs.existsSync(blockFile)) {
-          const crypto = require('crypto');
-          const os = require('os');
-          
-          // Gerar hardware ID
-          const networkInterfaces = os.networkInterfaces();
-          let macAddress = '';
-          for (const interfaceName in networkInterfaces) {
-            const interfaces = networkInterfaces[interfaceName];
-            for (const iface of interfaces) {
-              if (iface.mac && iface.mac !== '00:00:00:00:00:00') {
-                macAddress = iface.mac;
-                break;
-              }
-            }
-            if (macAddress) break;
-          }
-          
-          const hardwareInfo = {
-            mac: macAddress,
-            platform: os.platform(),
-            arch: os.arch(),
-            hostname: os.hostname(),
-            cpus: os.cpus().length,
-            totalmem: os.totalmem(),
-            userInfo: os.userInfo().username
-          };
-          
-          const hardwareString = JSON.stringify(hardwareInfo);
-          const hardwareId = crypto.createHash('sha256').update(hardwareString).digest('hex').substring(0, 16);
-          
-          // Verificar servidor com timeout rápido
-          const serverCheck = await new Promise((resolve) => {
-            const postData = JSON.stringify({ hardwareId: hardwareId });
-            const options = {
-              hostname: 'localhost',
-              port: 3000,
-              path: '/api/check-blocked',
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(postData)
-              },
-              timeout: 2000 // Timeout de 2 segundos
-            };
-            
-            const req = require('http').request(options, (res) => {
-              let responseData = '';
-              res.on('data', (chunk) => { responseData += chunk; });
-              res.on('end', () => {
-                try {
-                  const result = JSON.parse(responseData);
-                  resolve({ available: true, blocked: result.blocked === true, data: result });
-                } catch (error) {
-                  resolve({ available: false, blocked: false });
-                }
-              });
-            });
-            
-            req.on('error', () => resolve({ available: false, blocked: false }));
-            req.on('timeout', () => {
-              req.destroy();
-              resolve({ available: false, blocked: false });
-            });
-            
-            req.setTimeout(2000);
-            req.write(postData);
-            req.end();
-          });
-          
-          if (serverCheck.available && serverCheck.blocked) {
-            console.log('🚫 Bloqueio detectado no servidor durante execução, fechando app...');
-            
-            // Recriar arquivo de bloqueio
-            const blockData = {
-              blocked: true,
-              reason: serverCheck.data.reason || 'Bloqueio detectado durante execução',
-              timestamp: Date.now(),
-              hardwareId: hardwareId,
-              serverEnforced: true
-            };
-            
-            fs.writeFileSync(blockFile, JSON.stringify(blockData, null, 2));
-            
-            const { dialog } = require('electron');
-            dialog.showMessageBoxSync(null, {
-              type: 'error',
-              buttons: ['OK'],
-              title: 'Meu Filho - Acesso Negado',
-              message: 'Seu acesso ao app foi desativado pelo administrador.',
-              detail: '🚫 BLOQUEIO DETECTADO DURANTE EXECUÇÃO\n\nO app será fechado imediatamente.'
-            });
-            
-            app.quit();
-          } else if (!serverCheck.available) {
-            // Servidor offline - aumentar intervalo de verificação
-            serverOfflineCount++;
-            if (serverOfflineCount > 5) {
-              checkInterval = 300000; // 5 minutos quando servidor está offline
-              console.log('📡 Servidor offline há muito tempo - reduzindo verificações');
-            }
-          } else {
-            // Servidor online - resetar contador
-            serverOfflineCount = 0;
-            checkInterval = 30000; // Voltar para 30 segundos
-          }
-        }
-      } catch (error) {
-        console.log('⚠️ Erro na verificação periódica de bloqueio:', error);
-      }
-    }, checkInterval); // Intervalo dinâmico
-    
+    // Iniciar heartbeat para conectar ao painel
+    remoteControl.startHeartbeat();
+    console.log('🔐 Heartbeat iniciado - conectando ao painel de controle');
   } catch (error) {
     console.log('⚠️ Sistema de controle remoto não disponível');
+  }
+
+  // Inicializar monitor de performance
+  try {
+    performanceMonitor = new PerformanceMonitor();
+    console.log('📊 Monitor de performance inicializado');
+  } catch (error) {
+    console.log('⚠️ Monitor de performance não disponível');
+  }
+
+  // Inicializar sistema de recuperação de erros
+  try {
+    errorRecovery = new ErrorRecovery();
+    console.log('🛡️ Sistema de recuperação de erros inicializado');
+  } catch (error) {
+    console.log('⚠️ Sistema de recuperação não disponível');
   }
 
   await loadAccounts();
@@ -2046,75 +1713,22 @@ app.on('window-all-closed', async () => {
   }
 });
 
- app.on('before-quit', async (event) => {
-   console.log('💾 Salvando dados da sessão antes de sair...');
-   
-   event.preventDefault();
-   
-   try {
-     // SISTEMA ULTRA-ROBUSTO: Múltiplas tentativas de salvamento
-     let saved = false;
-     let attempts = 0;
-     const maxAttempts = 3;
-     
-     while (!saved && attempts < maxAttempts) {
-       try {
-         attempts++;
-         console.log(`💾 Tentativa ${attempts}/${maxAttempts} de salvamento...`);
-         
-         // Forçar o salvamento das contas
-         writeAccounts(accounts);
-         
-         // Verificar se salvou corretamente
-         const userDataPath = app.getPath('userData');
-         const accountsPath = path.join(userDataPath, 'accounts.json');
-         
-         if (fs.existsSync(accountsPath)) {
-           const savedData = fs.readFileSync(accountsPath, 'utf8');
-           const savedAccounts = JSON.parse(savedData);
-           
-           if (Array.isArray(savedAccounts) && savedAccounts.length === accounts.length) {
-             saved = true;
-             console.log('✅ Dados salvos com sucesso!');
-           } else {
-             console.log('⚠️ Dados não salvos corretamente, tentando novamente...');
-           }
-         } else {
-           console.log('⚠️ Arquivo não encontrado, tentando novamente...');
-         }
-         
-       } catch (error) {
-         console.log(`⚠️ Erro na tentativa ${attempts}: ${error.message}`);
-         
-         if (attempts < maxAttempts) {
-           // Aguardar um pouco antes de tentar novamente
-           await new Promise(resolve => setTimeout(resolve, 1000));
-         }
-       }
-     }
-     
-     if (!saved) {
-       console.log('🚨 Falha ao salvar dados após múltiplas tentativas');
-       
-       // Backup de emergência
-       try {
-         const userDataPath = app.getPath('userData');
-         const emergencyPath = path.join(userDataPath, 'emergency-accounts.json');
-         fs.writeFileSync(emergencyPath, JSON.stringify(accounts, null, 2));
-         console.log('🚨 Backup de emergência criado');
-       } catch (emergencyError) {
-         console.error('❌ Falha total no backup de emergência:', emergencyError);
-       }
-     }
-     
-     console.log('✅ Processo de salvamento finalizado');
-     app.exit(0);
-     
-   } catch (error) {
-     console.error('❌ Erro crítico ao salvar dados da sessão:', error);
-     app.exit(0);
-   }
- });
+app.on('before-quit', async (event) => {
+  console.log('💾 Salvando dados da sessão antes de sair...');
+  
+  event.preventDefault();
+  
+  try {
+    // Forçar o salvamento das contas antes de sair
+    writeAccounts(accounts);
+    console.log('✅ Todos os dados da sessão foram salvos');
+    
+    app.exit(0);
+  } catch (error) {
+    console.error('❌ Erro ao salvar dados da sessão:', error);
+    app.exit(0);
+  }
+});
 
 app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
   event.preventDefault();

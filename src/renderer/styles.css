@@ -1430,6 +1430,37 @@ body {
   flex-shrink: 0;
   position: relative;
   min-width: 60px; /* Largura mínima para telas pequenas */
+  user-select: none; /* Previne seleção de texto durante drag */
+}
+
+/* Estados de drag and drop */
+.avatar-tab.dragging {
+  opacity: 0.7;
+  transform: scale(1.1) rotate(2deg);
+  z-index: 1000;
+  cursor: grabbing;
+  animation: dragShake 0.1s ease-in-out infinite;
+}
+
+.avatar-tab.drag-over {
+  transform: scale(1.05);
+  border: 2px dashed var(--gragas-orange);
+  border-radius: 8px;
+  background: rgba(255, 107, 53, 0.1);
+}
+
+.avatar-tab.drag-placeholder {
+  opacity: 0.3;
+  background: linear-gradient(135deg, #40444b, #484b52);
+  border: 2px dashed #72767d;
+  border-radius: 8px;
+}
+
+/* Animação de tremor durante o drag */
+@keyframes dragShake {
+  0%, 100% { transform: scale(1.1) rotate(2deg) translateX(0); }
+  25% { transform: scale(1.1) rotate(2deg) translateX(-1px); }
+  75% { transform: scale(1.1) rotate(2deg) translateX(1px); }
 }
 
 .avatar-tab:hover {
