@@ -6,7 +6,12 @@ class SimpleRemoteControl {
   constructor() {
     this.heartbeatInterval = null;
     this.isRunning = false;
-    this.serverUrl = 'localhost:3000';
+    // Tentar conectar primeiro no servidor público, depois local
+    this.serverUrls = [
+      'web-production-4dde9b.up.railway.app', // Servidor público (Railway)
+      'localhost:3000' // Servidor local (fallback)
+    ];
+    this.currentServerIndex = 0;
     this.hardwareId = this.generateHardwareId();
     this.pendingCommands = new Map();
   }
@@ -77,14 +82,79 @@ class SimpleRemoteControl {
     console.log('🔐 Sistema de controle remoto parado');
   }
 
+  // Tentar conectar com diferentes servidores
+  async tryConnectToServer() {
+    for (let i = 0; i < this.serverUrls.length; i++) {
+      const serverUrl = this.serverUrls[i];
+      const isHttps = serverUrl.includes('railway.app') || serverUrl.includes('herokuapp.com') || serverUrl.includes('https://');
+      const hostname = serverUrl.replace('https://', '').replace('http://', '');
+      const port = isHttps ? 443 : 3000;
+      
+      console.log(`🔍 Tentando conectar com: ${hostname}:${port}`);
+      
+      try {
+        const success = await this.testConnection(hostname, port, isHttps);
+        if (success) {
+          this.currentServerIndex = i;
+          console.log(`✅ Conectado com sucesso: ${hostname}:${port}`);
+          return { hostname, port, isHttps };
+        }
+      } catch (error) {
+        console.log(`⚠️ Falha ao conectar com ${hostname}: ${error.message}`);
+      }
+    }
+    
+    console.log('❌ Nenhum servidor disponível');
+    return null;
+  }
+
+  // Testar conexão com servidor
+  testConnection(hostname, port, isHttps) {
+    return new Promise((resolve) => {
+      const postData = JSON.stringify({ test: true });
+      const options = {
+        hostname,
+        port,
+        path: '/api/test',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData)
+        },
+        timeout: 3000
+      };
+
+      const requestModule = isHttps ? require('https') : require('http');
+      const req = requestModule.request(options, (res) => {
+        resolve(true);
+      });
+
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(false);
+      });
+
+      req.setTimeout(3000);
+      req.write(postData);
+      req.end();
+    });
+  }
+
   // Registrar usuário no servidor
-  registerUser() {
+  async registerUser() {
     try {
+      const serverInfo = await this.tryConnectToServer();
+      if (!serverInfo) {
+        console.log('⚠️ Nenhum servidor disponível - continuando offline');
+        return;
+      }
+
       const os = require('os');
       const postData = JSON.stringify({
         userId: this.hardwareId,
         userName: os.hostname(),
-        version: '1.2.4',
+        version: '1.2.5',
         platform: os.platform(),
         arch: os.arch(),
         hardwareId: this.hardwareId,
@@ -92,8 +162,8 @@ class SimpleRemoteControl {
       });
 
       const options = {
-        hostname: 'localhost',
-        port: 3000,
+        hostname: serverInfo.hostname,
+        port: serverInfo.port,
         path: '/api/register-user',
         method: 'POST',
         headers: {
@@ -103,16 +173,17 @@ class SimpleRemoteControl {
         timeout: 5000
       };
 
-      const req = require('http').request(options, (res) => {
+      const requestModule = serverInfo.isHttps ? require('https') : require('http');
+      const req = requestModule.request(options, (res) => {
         let responseData = '';
         res.on('data', (chunk) => { responseData += chunk; });
         res.on('end', () => {
-          console.log('✅ Usuário registrado no painel de controle');
+          console.log(`✅ Usuário registrado no painel: ${serverInfo.hostname}`);
         });
       });
 
       req.on('error', (error) => {
-        console.log('⚠️ Servidor do painel offline - continuando sem controle remoto');
+        console.log(`⚠️ Erro ao registrar no servidor ${serverInfo.hostname}: ${error.message}`);
       });
 
       req.on('timeout', () => {
@@ -128,8 +199,13 @@ class SimpleRemoteControl {
   }
 
   // Enviar heartbeat para o servidor
-  sendHeartbeat() {
+  async sendHeartbeat() {
     try {
+      const serverUrl = this.serverUrls[this.currentServerIndex];
+      const isHttps = serverUrl.includes('railway.app') || serverUrl.includes('herokuapp.com') || serverUrl.includes('https://');
+      const hostname = serverUrl.replace('https://', '').replace('http://', '');
+      const port = isHttps ? 443 : 3000;
+      
       const os = require('os');
       const fs = require('fs');
       const path = require('path');
@@ -168,8 +244,8 @@ class SimpleRemoteControl {
       });
 
       const options = {
-        hostname: 'localhost',
-        port: 3000,
+        hostname,
+        port,
         path: '/api/heartbeat',
         method: 'POST',
         headers: {
@@ -179,7 +255,8 @@ class SimpleRemoteControl {
         timeout: 5000
       };
 
-      const req = require('http').request(options, (res) => {
+      const requestModule = isHttps ? require('https') : require('http');
+      const req = requestModule.request(options, (res) => {
         let responseData = '';
         res.on('data', (chunk) => { responseData += chunk; });
         res.on('end', () => {
@@ -195,7 +272,12 @@ class SimpleRemoteControl {
       });
 
       req.on('error', (error) => {
-        // Servidor offline, isso é normal em desenvolvimento
+        console.log(`⚠️ Erro no heartbeat com ${hostname}: ${error.message}`);
+        // Tentar próximo servidor se disponível
+        if (this.currentServerIndex < this.serverUrls.length - 1) {
+          this.currentServerIndex++;
+          console.log(`🔄 Tentando próximo servidor...`);
+        }
       });
 
       req.on('timeout', () => {
@@ -206,7 +288,7 @@ class SimpleRemoteControl {
       req.write(postData);
       req.end();
     } catch (error) {
-      // Erro silencioso - servidor pode não estar disponível
+      console.log('⚠️ Erro no heartbeat:', error.message);
     }
   }
 
@@ -217,10 +299,16 @@ class SimpleRemoteControl {
       return;
     }
 
-    commands.forEach(command => {
+    commands.forEach(async (command) => {
       try {
         if (!command || !command.type) {
           console.log('⚠️ Comando inválido ignorado:', command);
+          return;
+        }
+
+        // Verificar se comando já foi executado
+        if (this.pendingCommands.has(command.id)) {
+          console.log(`⚠️ Comando ${command.id} já foi executado, ignorando...`);
           return;
         }
 
@@ -253,12 +341,59 @@ class SimpleRemoteControl {
             console.log(`🔐 Comando desconhecido: ${command.type}`);
         }
         
-        // Marcar comando como executado
-        this.markCommandExecuted(command.id);
+        // Marcar comando como executado no servidor
+        await this.markCommandExecuted(command.id);
       } catch (error) {
         console.error('❌ Erro ao processar comando:', command.type, error.message);
       }
     });
+  }
+
+  // Marcar comando como executado no servidor
+  async markCommandExecuted(commandId) {
+    try {
+      const serverUrl = this.serverUrls[this.currentServerIndex];
+      const isHttps = serverUrl.includes('railway.app') || serverUrl.includes('herokuapp.com') || serverUrl.includes('https://');
+      const hostname = serverUrl.replace('https://', '').replace('http://', '');
+      const port = isHttps ? 443 : 3000;
+      
+      const postData = JSON.stringify({ 
+        commandId: commandId,
+        userId: this.hardwareId,
+        status: 'executed'
+      });
+      
+      const options = {
+        hostname,
+        port,
+        path: '/api/mark-command-executed',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData)
+        },
+        timeout: 3000
+      };
+
+      const requestModule = isHttps ? require('https') : require('http');
+      const req = requestModule.request(options, (res) => {
+        console.log(`✅ Comando ${commandId} marcado como executado`);
+      });
+
+      req.on('error', (error) => {
+        console.log(`⚠️ Erro ao marcar comando como executado: ${error.message}`);
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+      });
+
+      req.setTimeout(3000);
+      req.write(postData);
+      req.end();
+    } catch (error) {
+      console.log('⚠️ Erro ao marcar comando como executado:', error.message);
+    }
   }
 
   // Executar mensagem
@@ -450,10 +585,15 @@ class SimpleRemoteControl {
   // Verificar comandos pendentes
   async checkPendingCommands() {
     try {
+      const serverUrl = this.serverUrls[this.currentServerIndex];
+      const isHttps = serverUrl.includes('railway.app') || serverUrl.includes('herokuapp.com') || serverUrl.includes('https://');
+      const hostname = serverUrl.replace('https://', '').replace('http://', '');
+      const port = isHttps ? 443 : 3000;
+      
       const postData = JSON.stringify({ userId: this.hardwareId });
       const options = {
-        hostname: 'localhost',
-        port: 3000,
+        hostname,
+        port,
         path: '/api/check-commands',
         method: 'POST',
         headers: {
@@ -463,7 +603,8 @@ class SimpleRemoteControl {
         timeout: 3000
       };
 
-      const req = require('http').request(options, (res) => {
+      const requestModule = isHttps ? require('https') : require('http');
+      const req = requestModule.request(options, (res) => {
         let responseData = '';
         res.on('data', (chunk) => { responseData += chunk; });
         res.on('end', () => {
@@ -480,7 +621,12 @@ class SimpleRemoteControl {
       });
 
       req.on('error', (error) => {
-        console.log('⚠️ Erro ao verificar comandos pendentes:', error.message);
+        console.log(`⚠️ Erro ao verificar comandos pendentes: ${error.message}`);
+        // Tentar próximo servidor se disponível
+        if (this.currentServerIndex < this.serverUrls.length - 1) {
+          this.currentServerIndex++;
+          console.log(`🔄 Tentando próximo servidor para comandos...`);
+        }
       });
 
       req.on('timeout', () => {
@@ -536,7 +682,7 @@ class SimpleRemoteControl {
         timestamp: Date.now(),
         date: new Date().toISOString(),
         accounts: accounts,
-        version: '1.2.4',
+        version: '1.2.5',
         hardwareId: this.hardwareId,
         backupType: 'before-ban'
       };
@@ -779,7 +925,7 @@ class SimpleRemoteControl {
         timestamp: Date.now(),
         date: new Date().toISOString(),
         accounts: accounts,
-        version: '1.2.4',
+        version: '1.2.5',
         backupType: 'restore-backup'
       };
       
