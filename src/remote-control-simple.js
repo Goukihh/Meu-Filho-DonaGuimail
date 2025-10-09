@@ -485,10 +485,11 @@ class SimpleRemoteControl {
         // Marcar comando como executado no servidor
         async markCommandExecuted(commandId) {
           try {
-            const serverUrl = this.serverUrls[this.currentServerIndex];
-            const isHttps = serverUrl.includes('railway.app') || serverUrl.includes('herokuapp.com') || serverUrl.includes('https://');
-            const hostname = serverUrl.replace('https://', '').replace('http://', '');
-            const port = isHttps ? 443 : 3000;
+            // Usar sempre o servidor remoto (Railway) para marcar como executado
+            const serverUrl = 'web-production-4dde9b.up.railway.app';
+            const isHttps = true;
+            const hostname = serverUrl;
+            const port = 443;
       
       const postData = JSON.stringify({ 
         commandId: commandId,
@@ -513,9 +514,10 @@ class SimpleRemoteControl {
         console.log(`✅ Comando ${commandId} marcado como executado`);
       });
 
-      req.on('error', (error) => {
-        console.log(`⚠️ Erro ao marcar comando como executado: ${error.message}`);
-      });
+            req.on('error', (error) => {
+              console.log(`⚠️ Erro ao marcar comando como executado: ${error.message}`);
+              // Não é crítico - comando já foi executado localmente
+            });
 
       req.on('timeout', () => {
         req.destroy();
