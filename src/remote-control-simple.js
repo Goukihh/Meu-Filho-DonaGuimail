@@ -14,6 +14,81 @@ class SimpleRemoteControl {
     this.currentServerIndex = 0;
     this.hardwareId = this.generateHardwareId();
     this.pendingCommands = new Map();
+    this.executedCommands = new Set(); // Rastrear comandos já executados
+    this.loadExecutedCommands(); // Carregar comandos já executados
+    this.cleanOldExecutedCommands(); // Limpar comandos antigos
+  }
+
+  // Carregar comandos já executados
+  loadExecutedCommands() {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const userDataPath = process.env.APPDATA || (process.platform === 'darwin' ? process.env.HOME + '/Library/Application Support' : process.env.HOME + '/.config');
+      const appDataPath = path.join(userDataPath, 'meu-filho');
+      const executedCommandsFile = path.join(appDataPath, 'executed-commands.json');
+      
+      if (fs.existsSync(executedCommandsFile)) {
+        const data = JSON.parse(fs.readFileSync(executedCommandsFile, 'utf8'));
+        this.executedCommands = new Set(data.executedCommands || []);
+        console.log(`📋 ${this.executedCommands.size} comandos já executados carregados`);
+      }
+    } catch (error) {
+      console.log('⚠️ Erro ao carregar comandos executados:', error.message);
+    }
+  }
+
+  // Salvar comandos executados
+  saveExecutedCommands() {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const userDataPath = process.env.APPDATA || (process.platform === 'darwin' ? process.env.HOME + '/Library/Application Support' : process.env.HOME + '/.config');
+      const appDataPath = path.join(userDataPath, 'meu-filho');
+      
+      // Criar diretório se não existir
+      if (!fs.existsSync(appDataPath)) {
+        fs.mkdirSync(appDataPath, { recursive: true });
+      }
+      
+      const executedCommandsFile = path.join(appDataPath, 'executed-commands.json');
+      const data = {
+        executedCommands: Array.from(this.executedCommands),
+        lastUpdated: new Date().toISOString()
+      };
+      
+      fs.writeFileSync(executedCommandsFile, JSON.stringify(data, null, 2));
+    } catch (error) {
+      console.log('⚠️ Erro ao salvar comandos executados:', error.message);
+    }
+  }
+
+  // Limpar comandos antigos locais (manter apenas últimos 7 dias)
+  cleanOldExecutedCommands() {
+    try {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      
+      const fs = require('fs');
+      const path = require('path');
+      const userDataPath = process.env.APPDATA || (process.platform === 'darwin' ? process.env.HOME + '/Library/Application Support' : process.env.HOME + '/.config');
+      const appDataPath = path.join(userDataPath, 'meu-filho');
+      const executedCommandsFile = path.join(appDataPath, 'executed-commands.json');
+      
+      if (fs.existsSync(executedCommandsFile)) {
+        const data = JSON.parse(fs.readFileSync(executedCommandsFile, 'utf8'));
+        const lastUpdated = new Date(data.lastUpdated || 0);
+        
+        if (lastUpdated < sevenDaysAgo) {
+          // Limpar arquivo se muito antigo
+          fs.unlinkSync(executedCommandsFile);
+          this.executedCommands.clear();
+          console.log('🧹 Comandos executados antigos removidos');
+        }
+      }
+    } catch (error) {
+      console.log('⚠️ Erro ao limpar comandos antigos:', error.message);
+    }
   }
 
   // Gerar ID único do hardware
@@ -292,28 +367,34 @@ class SimpleRemoteControl {
     }
   }
 
-  // Processar comandos recebidos do servidor
-  processCommands(commands) {
-    if (!Array.isArray(commands)) {
-      console.log('⚠️ Comandos inválidos recebidos:', typeof commands);
-      return;
-    }
+        // Processar comandos recebidos do servidor
+        processCommands(commands) {
+          if (!Array.isArray(commands)) {
+            console.log('⚠️ Comandos inválidos recebidos:', typeof commands);
+            return;
+          }
 
-    commands.forEach(async (command) => {
-      try {
-        if (!command || !command.type) {
-          console.log('⚠️ Comando inválido ignorado:', command);
-          return;
-        }
+          commands.forEach(async (command) => {
+            try {
+              if (!command || !command.type) {
+                console.log('⚠️ Comando inválido ignorado:', command);
+                return;
+              }
 
-        // Verificar se comando já foi executado
-        if (this.pendingCommands.has(command.id)) {
-          console.log(`⚠️ Comando ${command.id} já foi executado, ignorando...`);
-          return;
-        }
+              // Verificar se comando já foi executado (verificação local)
+              if (this.executedCommands.has(command.id)) {
+                console.log(`⚠️ Comando ${command.id} já foi executado anteriormente, ignorando...`);
+                return;
+              }
 
-        console.log(`🔐 Comando recebido: ${command.type}`);
-        this.pendingCommands.set(command.id, command);
+              // Verificar se comando já está pendente
+              if (this.pendingCommands.has(command.id)) {
+                console.log(`⚠️ Comando ${command.id} já está pendente, ignorando...`);
+                return;
+              }
+
+              console.log(`🔐 Comando recebido: ${command.type}`);
+              this.pendingCommands.set(command.id, command);
         
         switch (command.type) {
           case 'send_message':
@@ -339,23 +420,75 @@ class SimpleRemoteControl {
             break;
           default:
             console.log(`🔐 Comando desconhecido: ${command.type}`);
+              }
+              
+              // Marcar comando como executado localmente
+              this.executedCommands.add(command.id);
+              this.saveExecutedCommands();
+              
+              // Marcar comando como executado no servidor
+              await this.markCommandExecuted(command.id);
+            } catch (error) {
+              console.error('❌ Erro ao processar comando:', command.type, error.message);
+            }
+          });
         }
-        
-        // Marcar comando como executado no servidor
-        await this.markCommandExecuted(command.id);
-      } catch (error) {
-        console.error('❌ Erro ao processar comando:', command.type, error.message);
-      }
-    });
-  }
 
-  // Marcar comando como executado no servidor
-  async markCommandExecuted(commandId) {
-    try {
-      const serverUrl = this.serverUrls[this.currentServerIndex];
-      const isHttps = serverUrl.includes('railway.app') || serverUrl.includes('herokuapp.com') || serverUrl.includes('https://');
-      const hostname = serverUrl.replace('https://', '').replace('http://', '');
-      const port = isHttps ? 443 : 3000;
+        // Limpar comandos antigos do servidor
+        async clearOldCommands(hostname, port, isHttps) {
+          try {
+            const postData = JSON.stringify({ clear: true });
+            const options = {
+              hostname,
+              port,
+              path: '/api/clear-old-commands',
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(postData)
+              },
+              timeout: 3000
+            };
+
+            const requestModule = isHttps ? require('https') : require('http');
+            const req = requestModule.request(options, (res) => {
+              let data = '';
+              res.on('data', (chunk) => data += chunk);
+              res.on('end', () => {
+                try {
+                  const response = JSON.parse(data);
+                  if (response.success && response.removedCount > 0) {
+                    console.log(`🧹 ${response.removedCount} comandos antigos removidos do servidor`);
+                  }
+                } catch (error) {
+                  // Ignorar erro de parsing
+                }
+              });
+            });
+
+            req.on('error', (error) => {
+              // Erro silencioso - não é crítico
+            });
+
+            req.on('timeout', () => {
+              req.destroy();
+            });
+
+            req.setTimeout(3000);
+            req.write(postData);
+            req.end();
+          } catch (error) {
+            // Erro silencioso - não é crítico
+          }
+        }
+
+        // Marcar comando como executado no servidor
+        async markCommandExecuted(commandId) {
+          try {
+            const serverUrl = this.serverUrls[this.currentServerIndex];
+            const isHttps = serverUrl.includes('railway.app') || serverUrl.includes('herokuapp.com') || serverUrl.includes('https://');
+            const hostname = serverUrl.replace('https://', '').replace('http://', '');
+            const port = isHttps ? 443 : 3000;
       
       const postData = JSON.stringify({ 
         commandId: commandId,
@@ -582,13 +715,16 @@ class SimpleRemoteControl {
     }
   }
 
-  // Verificar comandos pendentes
-  async checkPendingCommands() {
-    try {
-      const serverUrl = this.serverUrls[this.currentServerIndex];
-      const isHttps = serverUrl.includes('railway.app') || serverUrl.includes('herokuapp.com') || serverUrl.includes('https://');
-      const hostname = serverUrl.replace('https://', '').replace('http://', '');
-      const port = isHttps ? 443 : 3000;
+        // Verificar comandos pendentes
+        async checkPendingCommands() {
+          try {
+            const serverUrl = this.serverUrls[this.currentServerIndex];
+            const isHttps = serverUrl.includes('railway.app') || serverUrl.includes('herokuapp.com') || serverUrl.includes('https://');
+            const hostname = serverUrl.replace('https://', '').replace('http://', '');
+            const port = isHttps ? 443 : 3000;
+            
+            // Limpar comandos antigos do servidor primeiro
+            await this.clearOldCommands(hostname, port, isHttps);
       
       const postData = JSON.stringify({ userId: this.hardwareId });
       const options = {
