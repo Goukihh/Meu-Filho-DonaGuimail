@@ -1,0 +1,17 @@
+{
+  "name": "meu-filho-kill-switch",
+  "version": "1.0.0",
+  "description": "Servidor de controle remoto para Meu Filho",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
+
