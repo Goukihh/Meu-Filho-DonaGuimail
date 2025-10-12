@@ -142,8 +142,6 @@ if (!window.chrome) {
 }
 
 window.chrome.app = undefined;
-window.chrome.csi = function() {};
-window.chrome.loadTimes = function() {};
 
 // ========================================
 // TÉCNICAS DISCORD-SAFE (SEM BLOQUEAR CAPTCHA)

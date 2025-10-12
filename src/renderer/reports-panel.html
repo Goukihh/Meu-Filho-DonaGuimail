@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel de Relatórios</title>
+    <style>
+        /* Variáveis do tema Gragas Sunset - Importadas do tema principal */
+        :root {
+            /* Paleta Gragas Sunset - Inspirada na barba e cabelo do Gragas */
+            --gragas-orange: #FF6B35;        /* Laranja vibrante do cabelo */
+            --gragas-red: #D2691E;           /* Vermelho terroso da barba */
+            --gragas-gold: #FF8C00;          /* Dourado das sombras */
+            --gragas-warm: #FF7F50;          /* Coral quente */
+            --gragas-deep: #8B4513;          /* Marrom profundo */
+            
+            /* Gradiente Sunset Harmonioso */
+            --sunset-gradient: linear-gradient(135deg, #FF6B35 0%, #D2691E 50%, #8B4513 100%);
+            --sunset-glow: linear-gradient(45deg, #FF6B35, #FF8C00, #D2691E);
+            
+            /* Cores de fundo */
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #2f3136;
+            --bg-tertiary: #202225;
+            --bg-charcoal: #1a1a1a;
+            --bg-dark: #202225;
+            --bg-darker: #18191c;
+            
+            /* Cores de texto */
+            --text-primary: #ffffff;
+            --text-secondary: #b9bbbe;
+            
+            /* Cores de borda */
+            --border-color: #444;
+            
+            /* Sombras energizadas */
+            --energy-shadow: 0 0 25px rgba(255, 107, 53, 0.3);
+            --energy-glow: 0 0 40px rgba(255, 107, 53, 0.5), 0 0 80px rgba(255, 107, 53, 0.2);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary, #1a1a1a);
+            color: var(--text-primary, white);
+            overflow: hidden;
+        }
+
+        .reports-panel {
+            width: 100%;
+            height: 100vh;
+            background: var(--bg-primary, #1a1a1a);
+            border: 2px solid var(--gragas-orange, #FF6B35);
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            scrollbar-width: none; /* Firefox */
+            -ms-overflow-style: none; /* IE and Edge */
+        }
+
+        .reports-panel::-webkit-scrollbar {
+            display: none; /* Chrome, Safari and Opera */
+        }
+
+        /* Remover barras de rolagem de todos os elementos */
+        * {
+            scrollbar-width: none; /* Firefox */
+            -ms-overflow-style: none; /* IE and Edge */
+        }
+
+        *::-webkit-scrollbar {
+            display: none; /* Chrome, Safari and Opera */
+        }
+
+        .reports-panel-header {
+            background: var(--sunset-gradient, linear-gradient(135deg, #FF6B35 0%, #D2691E 50%, #8B4513 100%));
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid var(--gragas-orange, #FF6B35);
+            -webkit-app-region: drag;
+            cursor: move;
+        }
+
+        .reports-panel-header h3 {
+            margin: 0;
+            color: white;
+            font-size: 18px;
+            font-weight: 600;
+            user-select: none;
+        }
+
+        .btn-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: background-color 0.2s;
+            -webkit-app-region: no-drag;
+        }
+
+        .btn-close:hover {
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .reports-panel-content {
+            padding: 20px;
+            flex: 1;
+            overflow-y: auto;
+            background: var(--bg-secondary, #2f3136);
+        }
+
+        .group-selector {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+            gap: 15px;
+        }
+
+        .nav-btn {
+            background: var(--gragas-orange, #FF6B35);
+            border: none;
+            color: white;
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 18px;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+
+        .nav-btn:hover {
+            background: var(--gragas-gold, #FF8C00);
+            transform: scale(1.1);
+        }
+
+        .nav-btn:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        #current-group {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--gragas-orange, #FF6B35);
+            min-width: 80px;
+            text-align: center;
+        }
+
+        .webhook-field {
+            margin-bottom: 20px;
+        }
+
+        .webhook-field label {
+            display: block;
+            margin-bottom: 8px;
+            color: #ccc;
+            font-weight: 500;
+        }
+
+        .webhook-field input {
+            width: 100%;
+            padding: 10px;
+            background: var(--bg-tertiary, #202225);
+            border: 1px solid var(--border-color, #444);
+            border-radius: 6px;
+            color: var(--text-primary, white);
+            font-size: 14px;
+        }
+
+        .webhook-field input:focus {
+            outline: none;
+            border-color: var(--gragas-orange, #FF6B35);
+            box-shadow: 0 0 10px rgba(255, 107, 53, 0.3);
+        }
+
+        .capture-section {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--sunset-gradient, linear-gradient(135deg, #FF6B35, #D2691E));
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 15px;
+            transition: all 0.3s;
+            box-shadow: 0 2px 8px rgba(255, 107, 53, 0.3);
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, var(--gragas-red, #D2691E), var(--gragas-deep, #B8860B));
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(255, 107, 53, 0.4);
+        }
+
+        .btn-success {
+            background: var(--sunset-gradient, linear-gradient(135deg, #FF6B35, #D2691E));
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 15px;
+            transition: all 0.3s;
+            box-shadow: 0 2px 8px rgba(255, 107, 53, 0.3);
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: linear-gradient(135deg, var(--gragas-red, #D2691E), var(--gragas-deep, #B8860B));
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(255, 107, 53, 0.4);
+        }
+
+        .btn-success:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .screenshots-gallery {
+            margin-bottom: 20px;
+        }
+
+        .screenshots-gallery h4 {
+            color: #ccc;
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+
+        .screenshots-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+            padding: 10px;
+            background: var(--bg-tertiary, #202225);
+            border-radius: 8px;
+            border: 1px solid var(--border-color, #444);
+        }
+
+        .screenshot-item {
+            position: relative;
+            width: 100px;
+            height: 100px;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 2px solid var(--gragas-orange, #FF6B35);
+        }
+
+        .screenshot-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .screenshot-remove {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: rgba(255, 0, 0, 0.8);
+            border: none;
+            color: white;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .screenshot-remove:hover {
+            background: rgba(255, 0, 0, 1);
+        }
+
+        .send-section {
+            text-align: center;
+        }
+
+        /* Notificações internas */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            z-index: 1000;
+            animation: slideIn 0.3s ease-out;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .notification.success {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+        }
+
+        .notification.error {
+            background: linear-gradient(135deg, #f44336, #d32f2f);
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        /* Botão de captura com estados */
+        .btn-capturing {
+            background: #666 !important;
+            cursor: not-allowed !important;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        .btn-capturing:hover {
+            background: #666 !important;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="reports-panel">
+        <div class="reports-panel-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <div style="width: 4px; height: 4px; background: rgba(255,255,255,0.5); border-radius: 50%;"></div>
+                <div style="width: 4px; height: 4px; background: rgba(255,255,255,0.5); border-radius: 50%;"></div>
+                <div style="width: 4px; height: 4px; background: rgba(255,255,255,0.5); border-radius: 50%;"></div>
+            </div>
+            <h3>Painel de Relatórios</h3>
+            <button id="close-reports-btn" class="btn-close">×</button>
+        </div>
+        
+        <div class="reports-panel-content">
+            <!-- Seletor de Grupo -->
+            <div class="group-selector">
+                <button id="prev-group-btn" class="nav-btn">‹</button>
+                <span id="current-group">Grupo 1</span>
+                <button id="next-group-btn" class="nav-btn">›</button>
+            </div>
+            
+            <!-- Campo Webhook -->
+            <div class="webhook-field">
+                <label for="webhook-url">URL do Webhook:</label>
+                <input type="text" id="webhook-url" placeholder="https://discord.com/api/webhooks/...">
+            </div>
+            
+            <!-- Botão de Permissão/Captura -->
+            <div class="capture-section">
+                <button id="permission-btn" class="btn btn-primary">Conceder Permissão</button>
+            </div>
+            
+            <!-- Galeria de Screenshots -->
+            <div class="screenshots-gallery">
+                <h4>Screenshots Capturados:</h4>
+                <div id="screenshots-container" class="screenshots-container">
+                    <!-- Screenshots serão inseridos aqui -->
+                </div>
+            </div>
+            
+            <!-- Botão de Envio -->
+            <div class="send-section">
+                <button id="send-reports-btn" class="btn btn-success" disabled>
+                    <svg viewBox="0 0 24 24" style="width: 16px; height: 16px; margin-right: 8px;">
+                        <path d="M2,21L23,12L2,3V10L17,12L2,14V21Z" fill="currentColor"/>
+                    </svg>
+                    Enviar Relatório
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+
+        // Estado do painel de relatórios
+        let reportsState = {
+            currentGroup: 1,
+            maxGroups: 16,
+            screenshots: {},
+            sources: null,
+            hasPermission: false
+        };
+
+        // Elementos
+        const closeBtn = document.getElementById('close-reports-btn');
+        const prevBtn = document.getElementById('prev-group-btn');
+        const nextBtn = document.getElementById('next-group-btn');
+        const currentGroupSpan = document.getElementById('current-group');
+        const permissionBtn = document.getElementById('permission-btn');
+        const sendBtn = document.getElementById('send-reports-btn');
+        const webhookInput = document.getElementById('webhook-url');
+        const screenshotsContainer = document.getElementById('screenshots-container');
+
+        // Fechar painel
+        closeBtn.addEventListener('click', () => {
+            ipcRenderer.invoke('close-reports-panel');
+        });
+
+        // Navegação entre grupos
+        prevBtn.addEventListener('click', () => {
+            if (reportsState.currentGroup > 1) {
+                reportsState.currentGroup--;
+                saveAllData();
+                updateUI();
+            }
+        });
+
+        nextBtn.addEventListener('click', () => {
+            if (reportsState.currentGroup < reportsState.maxGroups) {
+                reportsState.currentGroup++;
+                saveAllData();
+                updateUI();
+            }
+        });
+
+        // Botão de permissão/captura
+        permissionBtn.addEventListener('click', async () => {
+            if (!reportsState.hasPermission) {
+                await requestScreenPermission();
+            } else {
+                await captureScreenshot();
+            }
+        });
+
+        // Botão de envio
+        sendBtn.addEventListener('click', async () => {
+            await sendReports();
+        });
+
+        // Atualizar estado do botão de envio e salvar dados
+        webhookInput.addEventListener('input', () => {
+            updateSendButtonState();
+            saveAllData();
+        });
+
+        // Atualizar interface
+        function updateUI() {
+            currentGroupSpan.textContent = `Grupo ${reportsState.currentGroup}`;
+            prevBtn.disabled = reportsState.currentGroup <= 1;
+            nextBtn.disabled = reportsState.currentGroup >= reportsState.maxGroups;
+            updateScreenshotsGallery();
+            updateSendButtonState();
+        }
+
+        // Solicitar permissão de captura
+        async function requestScreenPermission() {
+            try {
+                console.log('📸 Solicitando permissão de captura via Electron...');
+                
+                // Usar API do Electron para solicitar permissão
+                const result = await ipcRenderer.invoke('request-screen-permission');
+                
+                if (result.success) {
+                    reportsState.hasPermission = true;
+                    reportsState.sources = result.sources;
+
+                    permissionBtn.textContent = 'Printar';
+                    permissionBtn.classList.remove('btn-primary');
+                    permissionBtn.classList.add('btn-success');
+
+                    console.log('✅ Permissão de captura concedida via Electron');
+                } else {
+                    console.error('❌ Erro ao solicitar permissão:', result.error);
+                    alert('Erro ao solicitar permissão de captura: ' + result.error);
+                }
+            } catch (error) {
+                console.error('❌ Erro ao solicitar permissão:', error);
+                alert('Erro ao solicitar permissão de captura: ' + error.message);
+            }
+        }
+
+        // Capturar screenshot com detecção inteligente
+        async function captureScreenshot() {
+            if (!reportsState.hasPermission || !reportsState.sources) {
+                console.log('❌ Permissão não concedida ou fontes não disponíveis');
+                return;
+            }
+
+            try {
+                // Atualizar estado visual do botão
+                permissionBtn.textContent = 'Capturando...';
+                permissionBtn.classList.add('btn-capturing');
+                permissionBtn.disabled = true;
+
+                console.log('📸 Verificando estado do Discord...');
+                
+                // Verificar se Discord está carregado
+                const discordCheck = await ipcRenderer.invoke('check-discord-loaded');
+                let delay = 1000; // Delay padrão de 1 segundo
+                
+                if (discordCheck.success && discordCheck.isLoaded) {
+                    console.log('✅ Discord carregado, usando delay otimizado (300ms)');
+                    delay = 300; // Delay otimizado para Discord carregado
+                } else {
+                    console.log('⏳ Discord ainda carregando, usando delay padrão (1s)');
+                }
+                
+                // Aguardar delay inteligente
+                await new Promise(resolve => setTimeout(resolve, delay));
+                
+                console.log('📸 Capturando screenshot...');
+                
+                // Capturar screenshot da janela principal (Discord)
+                const result = await ipcRenderer.invoke('capture-screenshot');
+                
+                if (result.success) {
+                    // Usar base64 diretamente em vez de converter para blob
+                    const screenshotData = {
+                        id: Date.now(),
+                        base64: result.base64,
+                        timestamp: new Date().toISOString()
+                    };
+                    
+                    if (!reportsState.screenshots[reportsState.currentGroup]) {
+                        reportsState.screenshots[reportsState.currentGroup] = [];
+                    }
+                    
+                    reportsState.screenshots[reportsState.currentGroup].push(screenshotData);
+                    
+                    // Salvar dados automaticamente
+                    saveAllData();
+                    
+                    updateScreenshotsGallery();
+                    updateSendButtonState();
+                    
+                    console.log('✅ Screenshot capturado para grupo', reportsState.currentGroup);
+                    showNotification('Screenshot capturado com sucesso!', 'success');
+                } else {
+                    console.error('❌ Erro ao capturar screenshot:', result.error);
+                    showNotification('Erro ao capturar screenshot: ' + result.error, 'error');
+                }
+                
+            } catch (error) {
+                console.error('❌ Erro ao capturar screenshot:', error);
+                showNotification('Erro ao capturar screenshot: ' + error.message, 'error');
+            } finally {
+                // Restaurar estado do botão
+                permissionBtn.textContent = 'Printar';
+                permissionBtn.classList.remove('btn-capturing');
+                permissionBtn.disabled = false;
+            }
+        }
+
+        // Calcular área de corte
+        function calculateCropArea(canvasWidth, canvasHeight) {
+            const cropRatio = {
+                x: 0.15,
+                y: 0.25,
+                width: 0.7,
+                height: 0.6
+            };
+            
+            return {
+                x: Math.floor(canvasWidth * cropRatio.x),
+                y: Math.floor(canvasHeight * cropRatio.y),
+                width: Math.floor(canvasWidth * cropRatio.width),
+                height: Math.floor(canvasHeight * cropRatio.height)
+            };
+        }
+
+        // Atualizar galeria
+        function updateScreenshotsGallery() {
+            const groupScreenshots = reportsState.screenshots[reportsState.currentGroup] || [];
+            screenshotsContainer.innerHTML = '';
+            
+            groupScreenshots.forEach(screenshot => {
+                const item = document.createElement('div');
+                item.className = 'screenshot-item';
+                
+                const img = document.createElement('img');
+                img.src = `data:image/png;base64,${screenshot.base64}`;
+                
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'screenshot-remove';
+                removeBtn.innerHTML = '×';
+                removeBtn.addEventListener('click', () => {
+                    removeScreenshot(screenshot.id);
+                });
+                
+                item.appendChild(img);
+                item.appendChild(removeBtn);
+                screenshotsContainer.appendChild(item);
+            });
+        }
+
+        // Remover screenshot
+        function removeScreenshot(screenshotId) {
+            if (reportsState.screenshots[reportsState.currentGroup]) {
+                reportsState.screenshots[reportsState.currentGroup] = reportsState.screenshots[reportsState.currentGroup].filter(
+                    s => s.id !== screenshotId
+                );
+                
+                // Salvar dados automaticamente
+                saveAllData();
+                
+                updateScreenshotsGallery();
+                updateSendButtonState();
+            }
+        }
+
+        // Atualizar estado do botão de envio
+        function updateSendButtonState() {
+            const hasWebhook = webhookInput.value.trim() !== '';
+            const hasScreenshots = reportsState.screenshots[reportsState.currentGroup]?.length > 0;
+            sendBtn.disabled = !hasWebhook || !hasScreenshots;
+        }
+
+        // Salvar webhook
+        function saveWebhook() {
+            const webhookUrl = webhookInput.value.trim();
+            if (webhookUrl) {
+                localStorage.setItem('reports-webhook-url', webhookUrl);
+                console.log('💾 Webhook salvo:', webhookUrl);
+            }
+        }
+
+        // Salvar todos os dados
+        function saveAllData() {
+            const dataToSave = {
+                webhook: webhookInput.value.trim(),
+                screenshots: reportsState.screenshots,
+                currentGroup: reportsState.currentGroup
+            };
+            try {
+                localStorage.setItem('reports-panel-data', JSON.stringify(dataToSave));
+                console.log('💾 Todos os dados salvos:', dataToSave);
+            } catch (error) {
+                console.error('❌ Erro ao salvar dados:', error);
+            }
+        }
+
+        // Carregar todos os dados salvos
+        function loadSavedData() {
+            const savedData = localStorage.getItem('reports-panel-data');
+            console.log('🔍 Tentando carregar dados salvos:', savedData ? 'Dados encontrados' : 'Nenhum dado encontrado');
+            
+            if (savedData) {
+                try {
+                    const data = JSON.parse(savedData);
+                    console.log('📖 Dados carregados do localStorage:', data);
+                    
+                    // Carregar webhook
+                    if (data.webhook) {
+                        webhookInput.value = data.webhook;
+                        console.log('📖 Webhook carregado:', data.webhook);
+                    }
+                    
+                    // Carregar screenshots
+                    if (data.screenshots) {
+                        reportsState.screenshots = data.screenshots;
+                        console.log('📖 Screenshots carregados:', Object.keys(data.screenshots).length, 'grupos');
+                    }
+                    
+                    // Carregar grupo atual
+                    if (data.currentGroup) {
+                        reportsState.currentGroup = data.currentGroup;
+                        console.log('📖 Grupo atual carregado:', data.currentGroup);
+                    }
+                    
+                    console.log('✅ Todos os dados carregados com sucesso');
+                } catch (error) {
+                    console.error('❌ Erro ao carregar dados salvos:', error);
+                }
+            } else {
+                console.log('ℹ️ Nenhum dado salvo encontrado, iniciando com dados padrão');
+            }
+        }
+
+        // Enviar relatórios
+        async function sendReports() {
+            const webhookUrl = webhookInput.value.trim();
+            const groupScreenshots = reportsState.screenshots[reportsState.currentGroup];
+            
+            if (!webhookUrl || !groupScreenshots || groupScreenshots.length === 0) {
+                console.log('❌ Webhook ou screenshots não encontrados');
+                showNotification('Webhook ou screenshots não encontrados', 'error');
+                return;
+            }
+            
+            try {
+                // Atualizar estado visual do botão
+                sendBtn.textContent = 'Enviando...';
+                sendBtn.disabled = true;
+                sendBtn.classList.add('btn-capturing');
+                
+                console.log('📤 Enviando relatório para webhook:', webhookUrl);
+                console.log('📸 Screenshots encontrados:', groupScreenshots.length);
+                
+                const formData = new FormData();
+                formData.append('content', `# Grupo ${reportsState.currentGroup} #`);
+                
+                // Converter base64 para blob e adicionar ao FormData
+                groupScreenshots.forEach((screenshot, index) => {
+                    try {
+                        // Converter base64 para blob
+                        const byteCharacters = atob(screenshot.base64);
+                        const byteNumbers = new Array(byteCharacters.length);
+                        for (let i = 0; i < byteCharacters.length; i++) {
+                            byteNumbers[i] = byteCharacters.charCodeAt(i);
+                        }
+                        const byteArray = new Uint8Array(byteNumbers);
+                        const blob = new Blob([byteArray], { type: 'image/png' });
+                        
+                        formData.append(`file${index}`, blob, `screenshot_${index + 1}.png`);
+                        console.log(`📎 Screenshot ${index + 1} adicionado ao FormData`);
+                    } catch (conversionError) {
+                        console.error(`❌ Erro ao converter screenshot ${index + 1}:`, conversionError);
+                    }
+                });
+                
+                console.log('🚀 Enviando requisição para webhook...');
+                const response = await fetch(webhookUrl, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                console.log('📡 Resposta do webhook:', response.status, response.statusText);
+                
+                if (response.ok) {
+                    console.log('✅ Relatório enviado com sucesso para grupo', reportsState.currentGroup);
+                    
+                    // LIMPAR SCREENSHOTS DO GRUPO APÓS ENVIO BEM-SUCEDIDO
+                    reportsState.screenshots[reportsState.currentGroup] = [];
+                    saveAllData();
+                    updateScreenshotsGallery();
+                    updateSendButtonState();
+                    
+                    showNotification('Relatório enviado com sucesso!', 'success');
+                } else {
+                    console.error('❌ Erro na resposta do webhook:', response.status, response.statusText);
+                    showNotification('Erro ao enviar relatório: ' + response.statusText, 'error');
+                }
+                
+            } catch (error) {
+                console.error('❌ Erro ao enviar relatório:', error);
+                showNotification('Erro ao enviar relatório: ' + error.message, 'error');
+            } finally {
+                // Restaurar estado do botão
+                sendBtn.textContent = 'Enviar Relatório';
+                sendBtn.disabled = false;
+                sendBtn.classList.remove('btn-capturing');
+            }
+        }
+
+        // Função para mostrar notificações internas
+        function showNotification(message, type = 'success') {
+            // Remover notificação anterior se existir
+            const existingNotification = document.querySelector('.notification');
+            if (existingNotification) {
+                existingNotification.remove();
+            }
+            
+            // Criar nova notificação
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            
+            // Adicionar ao body
+            document.body.appendChild(notification);
+            
+            // Remover após 3 segundos
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.remove();
+                }
+            }, 3000);
+        }
+
+        // Carregar dados salvos
+        loadSavedData();
+
+        // Inicializar
+        updateUI();
+    </script>
+</body>
+</html>

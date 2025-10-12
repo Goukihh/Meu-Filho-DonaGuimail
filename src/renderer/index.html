@@ -69,6 +69,12 @@
                             <path d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.22,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.22,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.68 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z" fill="currentColor"/>
                         </svg>
                     </button>
+                    
+                    <button id="reports-btn" class="btn btn-reports-compact" title="Painel de Relatórios">
+                        <svg viewBox="0 0 24 24" style="width: 18px; height: 18px;">
+                            <path d="M4,4H7L9,2H15L17,4H20A2,2 0 0,1 22,6V18A2,2 0 0,1 20,20H4A2,2 0 0,1 2,18V6A2,2 0 0,1 4,4M12,7A5,5 0 0,0 7,12A5,5 0 0,0 12,17A5,5 0 0,0 17,12A5,5 0 0,0 12,7M12,9A3,3 0 0,1 15,12A3,3 0 0,1 12,15A3,3 0 0,1 9,12A3,3 0 0,1 12,9Z" fill="currentColor"/>
+                        </svg>
+                    </button>
                 </div>
             </div>
             
@@ -155,6 +161,50 @@
         </div>
     </div>
 
+    <!-- Aba dedicada para limpar sessão -->
+    <div id="clear-session-tab" class="clear-session-tab">
+        <div class="clear-session-tab-content">
+            <div class="clear-session-tab-header">
+                <h2>Limpar Sessão</h2>
+                <button id="close-clear-tab" class="close-clear-btn">&times;</button>
+            </div>
+            <div class="clear-session-tab-body">
+                <div class="dialog-icon warning">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M13,14H11V10H13M13,18H11V16H13M1,21H23L12,2L1,21Z" fill="currentColor"/>
+                    </svg>
+                </div>
+                <p>Tem certeza que deseja limpar a sessão desta conta? Você precisará fazer login novamente.</p>
+            </div>
+            <div class="clear-session-tab-footer">
+                <button id="cancel-clear-btn" class="btn btn-secondary">Cancelar</button>
+                <button id="confirm-clear-btn" class="btn btn-warning">Limpar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Aba dedicada para remover conta -->
+    <div id="remove-account-tab" class="remove-account-tab">
+        <div class="remove-account-tab-content">
+            <div class="remove-account-tab-header">
+                <h2>Remover Conta</h2>
+                <button id="close-remove-tab" class="close-remove-btn">&times;</button>
+            </div>
+            <div class="remove-account-tab-body">
+                <div class="dialog-icon danger">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M12,2C6.47,2 2,6.47 2,12C2,17.53 6.47,22 12,22C17.53,22 22,17.53 22,12C22,6.47 17.53,2 12,2M17,15.59L15.59,17L12,13.41L8.41,17L7,15.59L10.59,12L7,8.41L8.41,7L12,10.59L15.59,7L17,8.41L13.41,12L17,15.59Z" fill="currentColor"/>
+                    </svg>
+                </div>
+                <p>Tem certeza que deseja remover esta conta? Esta ação não pode ser desfeita.</p>
+            </div>
+            <div class="remove-account-tab-footer">
+                <button id="cancel-remove-btn" class="btn btn-secondary">Cancelar</button>
+                <button id="confirm-remove-btn" class="btn btn-danger">Remover</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Aba dedicada para adicionar conta -->
     <div id="add-account-tab" class="add-account-tab">
         <div class="add-account-tab-content">
@@ -219,80 +269,90 @@
         </div>
     </div>
 
-    <!-- Aba de Importar Contas -->
-    <div id="import-tab" class="import-tab">
-        <div class="import-tab-content">
-            <div class="import-tab-header">
-                <h2>Importar Contas</h2>
-                <button id="close-import-tab" class="close-import-btn">&times;</button>
+    <!-- Aba de Restaurar Backup -->
+    <div id="restore-tab" class="restore-tab">
+        <div class="restore-tab-content">
+            <div class="restore-tab-header">
+                <h2>Restaurar Backup</h2>
+                <button id="close-restore-tab" class="close-restore-btn">&times;</button>
             </div>
-            <div class="import-tab-body">
-                <div id="import-selecting" style="display: none;">
+            <div class="restore-tab-body">
+                <div id="restore-selecting" style="display: none;">
+                    <div style="text-align: center; padding: 20px;">
+                        <div style="font-size: 48px; margin-bottom: 20px;">🔄</div>
+                        <p>Backups Disponíveis</p>
+                        <div id="backup-list" style="max-height: 300px; overflow-y: auto; margin: 20px 0;">
+                            <!-- Lista de backups será preenchida dinamicamente -->
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="restore-processing" style="display: none;">
                     <div style="text-align: center; padding: 40px;">
-                        <div style="font-size: 48px; margin-bottom: 20px;">📁</div>
-                        <p>Selecionando arquivo...</p>
+                        <div style="font-size: 48px; margin-bottom: 20px;">🔄</div>
+                        <p>Restaurando backup...</p>
                         <p style="color: #b9bbbe; font-size: 14px;">Por favor, aguarde.</p>
                     </div>
                 </div>
                 
-                <div id="import-success" style="display: none;">
+                <div id="restore-success" style="display: none;">
                     <div style="text-align: center; padding: 40px;">
                         <div style="font-size: 48px; margin-bottom: 20px;">✅</div>
-                        <p id="import-success-message"></p>
-                        <p style="color: #b9bbbe; font-size: 14px;">As contas foram importadas com sucesso!</p>
+                        <p id="restore-success-message"></p>
+                        <p style="color: #b9bbbe; font-size: 14px;">A página será recarregada automaticamente.</p>
                     </div>
                 </div>
                 
-                <div id="import-error" style="display: none;">
+                <div id="restore-error" style="display: none;">
                     <div style="text-align: center; padding: 40px;">
                         <div style="font-size: 48px; margin-bottom: 20px;">❌</div>
-                        <p style="color: #f04747;">Erro ao importar contas</p>
-                        <p id="import-error-message" style="color: #b9bbbe; font-size: 14px; margin-top: 10px;"></p>
-                        <p style="color: #72767d; font-size: 12px; margin-top: 5px;">Verifique se o arquivo é válido e tente novamente.</p>
+                        <p style="color: #f04747;">Erro ao restaurar backup</p>
+                        <p id="restore-error-message" style="color: #b9bbbe; font-size: 14px; margin-top: 10px;"></p>
+                        <p style="color: #72767d; font-size: 12px; margin-top: 5px;">Verifique se o backup é válido e tente novamente.</p>
                     </div>
                 </div>
             </div>
-            <div class="import-tab-footer">
-                <button id="cancel-import-tab-btn" class="btn btn-secondary">Fechar</button>
+            <div class="restore-tab-footer">
+                <button id="cancel-restore-tab-btn" class="btn btn-secondary">Fechar</button>
             </div>
         </div>
     </div>
 
-    <!-- Aba de Exportar Contas -->
-    <div id="export-tab" class="export-tab">
-        <div class="export-tab-content">
-            <div class="export-tab-header">
-                <h2>Exportar Contas</h2>
-                <button id="close-export-tab" class="close-export-btn">&times;</button>
+    <!-- Aba de Backup -->
+    <div id="backup-tab" class="backup-tab">
+        <div class="backup-tab-content">
+            <div class="backup-tab-header">
+                <h2>Fazer Backup</h2>
+                <button id="close-backup-tab" class="close-backup-btn">&times;</button>
             </div>
-            <div class="export-tab-body">
-                <div id="export-processing" style="display: none;">
+            <div class="backup-tab-body">
+                <div id="backup-processing" style="display: none;">
                     <div style="text-align: center; padding: 40px;">
-                        <div style="font-size: 48px; margin-bottom: 20px;">📤</div>
-                        <p>Processando exportação...</p>
-                        <p style="color: #b9bbbe; font-size: 14px;">Por favor, aguarde.</p>
+                        <div style="font-size: 48px; margin-bottom: 20px;">💾</div>
+                        <p>Criando backup completo...</p>
+                        <p style="color: #b9bbbe; font-size: 14px;">Salvando contas, sessões e dados de login.</p>
                     </div>
                 </div>
                 
-                <div id="export-success" style="display: none;">
+                <div id="backup-success" style="display: none;">
                     <div style="text-align: center; padding: 40px;">
                         <div style="font-size: 48px; margin-bottom: 20px;">✅</div>
-                        <p id="export-success-message"></p>
-                        <p style="color: #b9bbbe; font-size: 14px;">As contas foram exportadas com sucesso!</p>
+                        <p id="backup-success-message"></p>
+                        <p style="color: #b9bbbe; font-size: 14px;">Backup salvo automaticamente na pasta de dados.</p>
                     </div>
                 </div>
                 
-                <div id="export-error" style="display: none;">
+                <div id="backup-error" style="display: none;">
                     <div style="text-align: center; padding: 40px;">
                         <div style="font-size: 48px; margin-bottom: 20px;">❌</div>
-                        <p style="color: #f04747;">Erro ao exportar contas</p>
-                        <p id="export-error-message" style="color: #b9bbbe; font-size: 14px; margin-top: 10px;"></p>
+                        <p style="color: #f04747;">Erro ao criar backup</p>
+                        <p id="backup-error-message" style="color: #b9bbbe; font-size: 14px; margin-top: 10px;"></p>
                         <p style="color: #72767d; font-size: 12px; margin-top: 5px;">Verifique as permissões e tente novamente.</p>
                     </div>
                 </div>
             </div>
-            <div class="export-tab-footer">
-                <button id="cancel-export-tab-btn" class="btn btn-secondary">Fechar</button>
+            <div class="backup-tab-footer">
+                <button id="cancel-backup-tab-btn" class="btn btn-secondary">Fechar</button>
             </div>
         </div>
     </div>
@@ -313,18 +373,18 @@
                         <div class="accounts-section">
                             <h3>Gerenciar Contas</h3>
                             <div class="accounts-actions">
-                                <button id="export-accounts-btn" class="btn btn-export-settings" title="Exportar Contas">
+                                <button id="create-backup-btn" class="btn btn-export-settings" title="Fazer Backup Completo">
                                     <svg viewBox="0 0 24 24" style="width: 16px; height: 16px;">
                                         <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" fill="currentColor"/>
                                     </svg>
-                                    Exportar
+                                    FAZER BACKUP
                                 </button>
                                 
-                                <button id="import-accounts-btn" class="btn btn-import-settings" title="Importar Contas">
+                                <button id="restore-backup-btn" class="btn btn-import-settings" title="Restaurar Backup">
                                     <svg viewBox="0 0 24 24" style="width: 16px; height: 16px;">
                                         <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z" fill="currentColor"/>
                                     </svg>
-                                    Importar
+                                    RESTAURAR BACKUP
                                 </button>
                             </div>
                         </div>
@@ -346,6 +406,7 @@
                                     <button id="apply-colors-btn" class="btn btn-apply-colors">Aplicar</button>
                                 </div>
                             </div>
+                            
                         </div>
                     </div>
                     
@@ -389,7 +450,39 @@
             </div>
             <div class="background-settings-footer">
                 <button id="reset-colors-btn" class="btn btn-secondary">Restaurar Padrão</button>
+                <button id="weak-pc-btn" class="btn btn-weak-pc-compact" title="Modo PC Fraco">
+                    <svg viewBox="0 0 16 16" style="width: 14px; height: 14px; margin-right: 6px;">
+                        <path d="M8 1L9.5 2.5L8 4L6.5 2.5L8 1ZM8 12L6.5 13.5L8 15L9.5 13.5L8 12ZM1 8L2.5 6.5L4 8L2.5 9.5L1 8ZM12 8L13.5 9.5L15 8L13.5 6.5L12 8ZM8 3C5.8 3 4 4.8 4 7C4 9.2 5.8 11 8 11C10.2 11 12 9.2 12 7C12 4.8 10.2 3 8 3ZM8 4C9.7 4 11 5.3 11 7C11 8.7 9.7 10 8 10C6.3 10 5 8.7 5 7C5 5.3 6.3 4 8 4Z" fill="currentColor"/>
+                    </svg>
+                    <span id="weak-pc-text">PC Fraco</span>
+                </button>
                 <button id="save-background-btn" class="btn btn-primary">Salvar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sistema de Confirmação Customizado -->
+    <div id="custom-confirm-dialog" class="custom-confirm-dialog">
+        <div class="confirm-content">
+            <div class="confirm-header">
+                <div class="confirm-title">Confirmar Ação</div>
+                <button class="confirm-close" onclick="closeCustomConfirm()">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z" fill="currentColor"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="confirm-body">
+                <div class="confirm-icon">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M13,14H11V10H13M13,18H11V16H13M1,21H23L12,2L1,21Z" fill="currentColor"/>
+                    </svg>
+                </div>
+                <div class="confirm-message">Tem certeza que deseja realizar esta ação?</div>
+            </div>
+            <div class="confirm-actions">
+                <button class="confirm-btn confirm-cancel" onclick="handleCustomConfirm(false)">CANCELAR</button>
+                <button class="confirm-btn confirm-confirm" onclick="handleCustomConfirm(true)">CONFIRMAR</button>
             </div>
         </div>
     </div>
