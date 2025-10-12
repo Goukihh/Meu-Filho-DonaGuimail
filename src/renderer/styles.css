@@ -3032,33 +3032,6 @@ body {
     100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
 }
 
-/* Botão de relatórios no header */
-.btn-reports-compact {
-    padding: 8px;
-    border: none;
-    border-radius: 6px;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
-    min-width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(135deg, #FF6B35, #D2691E);
-    color: #ffffff;
-    box-shadow: 0 2px 8px rgba(255, 107, 53, 0.3);
-    margin-left: 8px;
-}
-
-.btn-reports-compact:hover {
-    background: linear-gradient(135deg, #D2691E, #B8860B);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(255, 107, 53, 0.4);
-}
 
 /* Dialogs customizados baseados no sistema de renomear */
 .custom-dialog {

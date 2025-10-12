@@ -1,6 +1,8 @@
-const { app, BrowserWindow, BrowserView, ipcMain, session, dialog, desktopCapturer } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, session, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
+const http = require('http');
 // Auto-updater removido para evitar falsos alarmes do Windows Defender
 
 // Usar pasta de dados do usuário para persistência permanente
@@ -159,6 +161,7 @@ let isClearing = false; // Controle para evitar recriação durante limpeza de s
 let isRemoving = false; // Controle para evitar recriação durante remoção
 let isAddingAccount = false; // Controle para evitar recriação durante adição de conta
 let cleanupInterval; // Variável para controle de limpeza de memória
+let killSwitchInterval; // Variável para controle do kill switch
 
 // Contas padrão
 const defaultAccounts = [
@@ -562,12 +565,15 @@ function cleanupMemory() {
 }
 
 // Limpeza agressiva de memória para computadores fracos
-function aggressiveMemoryCleanup() {
+async function aggressiveMemoryCleanup() {
   try {
     // Verificar se o processo ainda está ativo
     if (process.exitCode !== undefined || !mainWindow || mainWindow.isDestroyed()) {
       return;
     }
+    
+    // VERIFICAR SE O MODO PC FRACO ESTÁ ATIVO ANTES DE DESTRUIR BROWSERVIEWS
+    const isWeakPC = await isWeakPCModeActive();
     
     // Forçar garbage collection se disponível
     if (global.gc) {
@@ -587,41 +593,115 @@ function aggressiveMemoryCleanup() {
       }
     }
     
-    // DESTRUIÇÃO AGRESSIVA: Manter apenas 1 BrowserView ativa
-    const activeAccount = accounts.find(acc => acc.active);
-    const viewsToDestroy = [];
-    
-    browserViews.forEach((view, accountId) => {
-      if (accountId !== activeAccount?.id) {
-        try {
-          // DESTRUIR completamente BrowserViews inativas
-          if (!view.webContents.isDestroyed()) {
-            mainWindow.removeBrowserView(view);
-            view.webContents.destroy();
-            viewsToDestroy.push(accountId);
+    // APENAS DESTRUIR BROWSERVIEWS SE O MODO PC FRACO ESTIVER ATIVO
+    if (isWeakPC) {
+      console.log('💻 Modo PC Fraco ativo - Aplicando limpeza agressiva de BrowserViews');
+      
+      // DESTRUIÇÃO AGRESSIVA: Manter apenas 1 BrowserView ativa
+      const activeAccount = accounts.find(acc => acc.active);
+      const viewsToDestroy = [];
+      
+      browserViews.forEach((view, accountId) => {
+        if (accountId !== activeAccount?.id) {
+          try {
+            // DESTRUIR completamente BrowserViews inativas
+            if (!view.webContents.isDestroyed()) {
+              mainWindow.removeBrowserView(view);
+              view.webContents.destroy();
+              viewsToDestroy.push(accountId);
+            }
+          } catch (e) {
+            // Ignorar erros silenciosamente
           }
-        } catch (e) {
-          // Ignorar erros silenciosamente
-        }
-      } else {
-        // Manter apenas a view ativa
-        try {
-          if (!view.webContents.isDestroyed()) {
-            view.webContents.setBackgroundThrottling(false);
+        } else {
+          // Manter apenas a view ativa
+          try {
+            if (!view.webContents.isDestroyed()) {
+              view.webContents.setBackgroundThrottling(false);
+            }
+          } catch (e) {
+            // Ignorar erros silenciosamente
           }
-        } catch (e) {
-          // Ignorar erros silenciosamente
         }
-      }
-    });
-    
-    // Remover referências das BrowserViews destruídas
-    viewsToDestroy.forEach(accountId => {
-      browserViews.delete(accountId);
-    });
+      });
+      
+      // Remover referências das BrowserViews destruídas
+      viewsToDestroy.forEach(accountId => {
+        browserViews.delete(accountId);
+      });
+    } else {
+      console.log('⚡ Modo normal - Preservando todas as BrowserViews');
+    }
     
   } catch (error) {
     // Silenciar erros para evitar EPIPE
+  }
+}
+
+// SISTEMA DE KILL SWITCH - CONTROLE REMOTO
+const KILL_SWITCH_URL = 'https://meu-filho-kill-switch.onrender.com/api/status'; // URL do seu servidor
+const KILL_SWITCH_CHECK_INTERVAL = 30 * 60 * 1000; // Verificar a cada 30 minutos
+
+// Verificar kill switch
+async function checkKillSwitch() {
+  try {
+    console.log('🔍 Verificando kill switch...');
+    
+    const response = await fetch(KILL_SWITCH_URL, {
+      method: 'GET',
+      timeout: 10000 // 10 segundos de timeout
+    });
+    
+    if (!response.ok) {
+      console.log('⚠️ Erro ao verificar kill switch, continuando...');
+      return;
+    }
+    
+    const data = await response.json();
+    
+    if (!data.active) {
+      console.log('❌ KILL SWITCH ATIVADO - Encerrando aplicação');
+      console.log('📢 Motivo:', data.message);
+      
+      // Mostrar mensagem para o usuário
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('kill-switch-activated', data.message);
+      }
+      
+      // Encerrar aplicação após 3 segundos
+      setTimeout(() => {
+        app.quit();
+      }, 3000);
+      
+      return true; // Kill switch ativado
+    } else {
+      console.log('✅ Kill switch OK - App funcionando normalmente');
+      return false; // Kill switch não ativado
+    }
+  } catch (error) {
+    console.log('⚠️ Erro ao verificar kill switch:', error.message);
+    console.log('📱 Continuando sem verificação...');
+    return false; // Em caso de erro, continuar funcionando
+  }
+}
+
+// Iniciar verificação do kill switch
+function startKillSwitch() {
+  console.log('🔒 Sistema de kill switch iniciado');
+  
+  // Verificar imediatamente
+  checkKillSwitch();
+  
+  // Verificar a cada 30 minutos
+  killSwitchInterval = setInterval(checkKillSwitch, KILL_SWITCH_CHECK_INTERVAL);
+}
+
+// Parar verificação do kill switch
+function stopKillSwitch() {
+  if (killSwitchInterval) {
+    clearInterval(killSwitchInterval);
+    killSwitchInterval = null;
+    console.log('🔓 Sistema de kill switch parado');
   }
 }
 
@@ -1135,12 +1215,8 @@ async function switchToBrowserView(accountId) {
     }
   }
 
-  // Remover BrowserView atual se existir
-  browserViews.forEach((view, id) => {
-    if (id !== accountId) {
-      mainWindow.removeBrowserView(view);
-    }
-  });
+  // No modo PC fraco, não remover outras BrowserViews - apenas trocar a ativa
+  // No modo normal, manter todas as BrowserViews ativas
 
   let view = browserViews.get(accountId);
   if (!view || view.webContents.isDestroyed()) {
@@ -1717,390 +1793,8 @@ ipcMain.handle('open-download-page', (event, downloadUrl) => {
   return true;
 });
 
-// ========================================
-// PAINEL DE RELATÓRIOS - JANELA MODAL
-// ========================================
-
-let reportsWindow = null;
-
-// Função auxiliar para obter cor personalizada
-async function getCustomColor() {
-  try {
-    const settingsPath = path.join(userDataPath, 'settings.json');
-    if (fs.existsSync(settingsPath)) {
-      const data = fs.readFileSync(settingsPath, 'utf8');
-      const settings = JSON.parse(data);
-      return settings.customColor || null;
-    }
-    return null;
-  } catch (error) {
-    console.error('Erro ao obter cor personalizada:', error);
-    return null;
-  }
-}
-
-// Handler para abrir painel de relatórios
-ipcMain.handle('open-reports-panel', async () => {
-  if (reportsWindow) {
-    reportsWindow.focus();
-    return;
-  }
-
-  reportsWindow = new BrowserWindow({
-            width: 400,
-            height: 500,
-    parent: mainWindow,
-    modal: false,
-    resizable: false,
-    maximizable: false,
-    minimizable: false,
-    skipTaskbar: true,
-    frame: false,
-    alwaysOnTop: true,
-    movable: true,
-    webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
-    }
-  });
-
-  reportsWindow.loadFile(path.join(__dirname, 'renderer', 'reports-panel.html'));
-
-  // Aplicar cores personalizadas quando a janela estiver pronta
-  reportsWindow.webContents.once('did-finish-load', async () => {
-    try {
-      // Obter cor personalizada
-      const customColor = await getCustomColor();
-      console.log('🎨 Cor personalizada obtida para painel de relatórios:', customColor);
-      
-      if (customColor) {
-        // Aplicar cor personalizada no painel de relatórios
-        await reportsWindow.webContents.executeJavaScript(`
-          console.log('🎨 Aplicando cor personalizada:', '${customColor}');
-          
-          // Função para escurecer cor
-          function darkenColor(color, percent) {
-            const num = parseInt(color.replace("#", ""), 16);
-            const amt = Math.round(2.55 * percent);
-            const R = Math.max(0, (num >> 16) - amt);
-            const G = Math.max(0, (num >> 8 & 0x00FF) - amt);
-            const B = Math.max(0, (num & 0x0000FF) - amt);
-            return "#" + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
-          }
-          
-          // Aplicar todas as variáveis CSS
-          const root = document.documentElement;
-          root.style.setProperty('--gragas-orange', '${customColor}');
-          root.style.setProperty('--gragas-red', darkenColor('${customColor}', 15));
-          root.style.setProperty('--gragas-gold', darkenColor('${customColor}', 10));
-          root.style.setProperty('--gragas-warm', darkenColor('${customColor}', 5));
-          root.style.setProperty('--gragas-deep', darkenColor('${customColor}', 25));
-          root.style.setProperty('--sunset-gradient', 'linear-gradient(135deg, ${customColor} 0%, ' + darkenColor('${customColor}', 15) + ' 50%, ' + darkenColor('${customColor}', 25) + ' 100%)');
-          
-          // Aplicar cores nos elementos específicos
-          const header = document.querySelector('.reports-panel-header');
-          if (header) {
-            header.style.background = 'linear-gradient(135deg, ${customColor} 0%, ' + darkenColor('${customColor}', 15) + ' 50%, ' + darkenColor('${customColor}', 25) + ' 100%)';
-            header.style.borderBottomColor = '${customColor}';
-          }
-          
-          // Aplicar cor nos botões
-          const navBtns = document.querySelectorAll('.nav-btn');
-          navBtns.forEach(btn => {
-            btn.style.background = '${customColor}';
-            btn.style.color = 'white';
-          });
-          
-          const primaryBtns = document.querySelectorAll('.btn-primary, .btn-success');
-          primaryBtns.forEach(btn => {
-            btn.style.background = 'linear-gradient(135deg, ${customColor}, ' + darkenColor('${customColor}', 15) + ')';
-            btn.style.color = 'white';
-          });
-          
-          // Aplicar cor no texto do grupo atual
-          const currentGroup = document.getElementById('current-group');
-          if (currentGroup) {
-            currentGroup.style.color = '${customColor}';
-          }
-          
-          // Aplicar cor nas bordas dos screenshots
-          const screenshotItems = document.querySelectorAll('.screenshot-item');
-          screenshotItems.forEach(item => {
-            item.style.borderColor = '${customColor}';
-          });
-          
-          console.log('✅ Cor personalizada aplicada com sucesso no painel de relatórios');
-        `);
-      } else {
-        console.log('ℹ️ Nenhuma cor personalizada encontrada, usando tema padrão');
-      }
-    } catch (error) {
-      console.error('❌ Erro ao aplicar cor personalizada no painel de relatórios:', error);
-    }
-  });
-
-  reportsWindow.on('closed', () => {
-    reportsWindow = null;
-  });
-
-  return true;
-});
-
-// Handler para fechar painel de relatórios
-ipcMain.handle('close-reports-panel', () => {
-  if (reportsWindow) {
-    reportsWindow.close();
-    reportsWindow = null;
-  }
-  return true;
-});
-
-// Handler para aplicar tema no painel de relatórios
-ipcMain.handle('apply-theme-to-reports', async (event, customColor) => {
-  if (reportsWindow && !reportsWindow.isDestroyed()) {
-    try {
-      await reportsWindow.webContents.executeJavaScript(`
-        console.log('🎨 Aplicando tema atualizado no painel de relatórios:', '${customColor}');
-        
-        // Função para escurecer cor
-        function darkenColor(color, percent) {
-          const num = parseInt(color.replace("#", ""), 16);
-          const amt = Math.round(2.55 * percent);
-          const R = Math.max(0, (num >> 16) - amt);
-          const G = Math.max(0, (num >> 8 & 0x00FF) - amt);
-          const B = Math.max(0, (num & 0x0000FF) - amt);
-          return "#" + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
-        }
-        
-        // Aplicar todas as variáveis CSS
-        const root = document.documentElement;
-        root.style.setProperty('--gragas-orange', '${customColor}');
-        root.style.setProperty('--gragas-red', darkenColor('${customColor}', 15));
-        root.style.setProperty('--gragas-gold', darkenColor('${customColor}', 10));
-        root.style.setProperty('--gragas-warm', darkenColor('${customColor}', 5));
-        root.style.setProperty('--gragas-deep', darkenColor('${customColor}', 25));
-        root.style.setProperty('--sunset-gradient', 'linear-gradient(135deg, ${customColor} 0%, ' + darkenColor('${customColor}', 15) + ' 50%, ' + darkenColor('${customColor}', 25) + ' 100%)');
-        
-        // Aplicar cores nos elementos específicos
-        const header = document.querySelector('.reports-panel-header');
-        if (header) {
-          header.style.background = 'linear-gradient(135deg, ${customColor} 0%, ' + darkenColor('${customColor}', 15) + ' 50%, ' + darkenColor('${customColor}', 25) + ' 100%)';
-          header.style.borderBottomColor = '${customColor}';
-        }
-        
-        // Aplicar cor nos botões
-        const navBtns = document.querySelectorAll('.nav-btn');
-        navBtns.forEach(btn => {
-          btn.style.background = '${customColor}';
-          btn.style.color = 'white';
-        });
-        
-        const primaryBtns = document.querySelectorAll('.btn-primary, .btn-success');
-        primaryBtns.forEach(btn => {
-          btn.style.background = 'linear-gradient(135deg, ${customColor}, ' + darkenColor('${customColor}', 15) + ')';
-          btn.style.color = 'white';
-        });
-        
-        // Aplicar cor no texto do grupo atual
-        const currentGroup = document.getElementById('current-group');
-        if (currentGroup) {
-          currentGroup.style.color = '${customColor}';
-        }
-        
-        // Aplicar cor nas bordas dos screenshots
-        const screenshotItems = document.querySelectorAll('.screenshot-item');
-        screenshotItems.forEach(item => {
-          item.style.borderColor = '${customColor}';
-        });
-        
-        console.log('✅ Tema atualizado com sucesso no painel de relatórios');
-      `);
-      return { success: true };
-    } catch (error) {
-      console.error('❌ Erro ao aplicar tema no painel de relatórios:', error);
-      return { success: false, error: error.message };
-    }
-  }
-  return { success: false, error: 'Painel de relatórios não está aberto' };
-});
 
 
-// ========================================
-// FUNCIONALIDADES DE CAPTURA DE TELA PARA PAINEL DE RELATÓRIOS
-// ========================================
-
-// Handler para solicitar permissão de captura de tela
-ipcMain.handle('request-screen-permission', async () => {
-  try {
-    console.log('📸 Solicitando permissão de captura de tela...');
-    
-    // Usar a API nativa do Electron para captura de tela
-    const sources = await desktopCapturer.getSources({
-      types: ['screen', 'window'],
-      thumbnailSize: { width: 1920, height: 1080 }
-    });
-    
-    if (sources.length > 0) {
-      console.log('✅ Permissão de captura concedida');
-      return { 
-        success: true, 
-        sources: sources,
-        message: 'Permissão de captura concedida com sucesso!' 
-      };
-    } else {
-      console.log('❌ Nenhuma fonte de captura disponível');
-      return { 
-        success: false, 
-        error: 'Nenhuma fonte de captura disponível' 
-      };
-    }
-  } catch (error) {
-    console.error('❌ Erro ao solicitar permissão de captura:', error);
-    return { 
-      success: false, 
-      error: `Erro ao solicitar permissão: ${error.message}` 
-    };
-  }
-});
-
-// Handler para capturar screenshot
-ipcMain.handle('capture-screenshot', async (event, sourceId) => {
-  try {
-    console.log('📸 Capturando screenshot do modal/área do Discord...');
-    
-    // Verificação inteligente do estado do Discord (otimizado)
-    let screenshot = null;
-    let attempts = 0;
-    const maxAttempts = 3;
-    
-    while (attempts < maxAttempts && !screenshot) {
-      attempts++;
-      
-      // Aguardar progressivamente menos tempo
-      if (attempts > 1) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-      }
-      
-      // Tentar capturar do BrowserView ativo primeiro
-      if (browserViews.size > 0) {
-        try {
-          // Encontrar o BrowserView ativo de forma mais segura
-          const views = Array.from(browserViews.values());
-          const activeView = views.find(view => {
-            try {
-              return view && view.webContents && !view.webContents.isDestroyed();
-            } catch (e) {
-              return false;
-            }
-          });
-          
-          if (activeView && activeView.webContents) {
-            console.log(`📸 Tentativa ${attempts}: Capturando do BrowserView ativo (Discord)...`);
-            screenshot = await activeView.webContents.capturePage();
-          }
-        } catch (viewError) {
-          console.log(`⚠️ Tentativa ${attempts}: Erro ao acessar BrowserView:`, viewError.message);
-        }
-      }
-      
-      // Se não conseguiu capturar do BrowserView, tentar da janela principal
-      if (!screenshot) {
-        try {
-          console.log(`📸 Tentativa ${attempts}: Capturando da janela principal...`);
-          screenshot = await mainWindow.webContents.capturePage();
-        } catch (mainError) {
-          console.log(`⚠️ Tentativa ${attempts}: Erro ao capturar da janela principal:`, mainError.message);
-        }
-      }
-    }
-    
-    if (!screenshot) {
-      return { 
-        success: false, 
-        error: 'Não foi possível capturar o screenshot do conteúdo' 
-      };
-    }
-    
-    // Converter NativeImage para buffer
-    const buffer = screenshot.toPNG();
-    
-    // Converter buffer para base64 para serialização
-    const base64 = buffer.toString('base64');
-    
-    console.log('✅ Screenshot do modal/área do Discord capturado com sucesso');
-    return { 
-      success: true, 
-      base64: base64,
-      message: 'Screenshot do modal/área do Discord capturado com sucesso!' 
-    };
-    
-  } catch (error) {
-    console.error('❌ Erro ao capturar screenshot:', error);
-    return { 
-      success: false, 
-      error: `Erro ao capturar screenshot: ${error.message}` 
-    };
-  }
-});
-
-// Handler para verificar se Discord está carregado
-ipcMain.handle('check-discord-loaded', async () => {
-  try {
-    if (browserViews.size > 0) {
-      const views = Array.from(browserViews.values());
-      const activeView = views.find(view => {
-        try {
-          return view && view.webContents && !view.webContents.isDestroyed();
-        } catch (e) {
-          return false;
-        }
-      });
-      
-      if (activeView && activeView.webContents) {
-        // Verificar se o Discord está carregado verificando elementos específicos
-        const isLoaded = await activeView.webContents.executeJavaScript(`
-          (() => {
-            try {
-              // Verificar se elementos do Discord estão presentes
-              const discordElements = document.querySelector('[class*="app"]') || 
-                                    document.querySelector('[class*="sidebar"]') ||
-                                    document.querySelector('[class*="chat"]') ||
-                                    document.querySelector('[class*="guild"]');
-              
-              // Verificar se não está na tela de login
-              const loginElements = document.querySelector('[class*="login"]') ||
-                                   document.querySelector('[class*="auth"]') ||
-                                   document.querySelector('input[type="password"]');
-              
-              return discordElements && !loginElements;
-            } catch (e) {
-              return false;
-            }
-          })()
-        `);
-        
-        return { 
-          success: true, 
-          isLoaded: isLoaded,
-          message: isLoaded ? 'Discord carregado e pronto' : 'Discord ainda carregando'
-        };
-      }
-    }
-    
-    return { 
-      success: false, 
-      isLoaded: false,
-      message: 'Nenhuma instância do Discord encontrada' 
-    };
-  } catch (error) {
-    console.error('❌ Erro ao verificar estado do Discord:', error);
-    return { 
-      success: false, 
-      isLoaded: false,
-      error: `Erro ao verificar Discord: ${error.message}` 
-    };
-  }
-});
 
 // ========================================
 // FUNCIONALIDADES DE FUNDO PERSONALIZADO
@@ -2284,39 +1978,48 @@ function removeWeakPCOptimizations() {
 // Limpeza agressiva de BrowserViews para modo PC fraco
 function aggressiveBrowserViewCleanup() {
   try {
-    // Limpeza agressiva de BrowserViews (log removido para performance)
+    // Limpeza agressiva de BrowserViews para modo PC fraco
+    // MANTÉM até 5 BrowserViews ativas (não destrói todas)
     
-    // 1. Destruir TODAS as BrowserViews inativas (não apenas pausar)
     const activeAccount = accounts.find(acc => acc.active);
     let destroyedCount = 0;
     
-    for (const [accountId, view] of browserViews.entries()) {
-      if (accountId !== activeAccount?.id) {
-        try {
-          if (!view.webContents.isDestroyed()) {
-            // Destruir completamente a BrowserView
-            mainWindow.removeBrowserView(view);
-            view.webContents.destroy();
-            browserViews.delete(accountId);
-            destroyedCount++;
-            console.log(`💥 BrowserView ${accountId} destruída`);
+    // CORREÇÃO: Se temos 5 ou mais BrowserViews, destruir apenas as mais antigas
+    if (browserViews.size >= 5) {
+      const viewsToDestroy = browserViews.size - 5;
+      const viewsArray = Array.from(browserViews.entries());
+      
+      // Destruir as mais antigas (exceto a ativa)
+      for (let i = 0; i < viewsToDestroy && i < viewsArray.length; i++) {
+        const [accountId, view] = viewsArray[i];
+        
+        // NÃO destruir a conta ativa
+        if (accountId !== activeAccount?.id) {
+          try {
+            if (!view.webContents.isDestroyed()) {
+              mainWindow.removeBrowserView(view);
+              view.webContents.destroy();
+              browserViews.delete(accountId);
+              destroyedCount++;
+              console.log(`💥 BrowserView ${accountId} destruída (limite de 5 atingido)`);
+            }
+          } catch (error) {
+            console.error(`❌ Erro ao destruir BrowserView ${accountId}:`, error);
           }
-        } catch (error) {
-          console.error(`❌ Erro ao destruir BrowserView ${accountId}:`, error);
         }
       }
     }
     
-    // 2. NUNCA LIMPAR SESSÕES NO MODO PC FRACO - APENAS CACHE
+    // NUNCA LIMPAR SESSÕES NO MODO PC FRACO - APENAS CACHE
     // As sessões devem permanecer logadas sempre!
     console.log(`🔐 Preservando todas as ${sessionMap.size} sessões logadas (NUNCA deslogar)`);
     
-    // 3. Forçar garbage collection
+    // Forçar garbage collection
     if (global.gc) {
       global.gc();
     }
     
-    // Limpeza agressiva concluida (log removido para performance)
+    console.log(`🧹 Limpeza agressiva concluída: ${destroyedCount} BrowserViews destruídas, ${browserViews.size} ativas`);
   } catch (error) {
     console.error('❌ Erro na limpeza agressiva:', error);
   }
@@ -3387,6 +3090,9 @@ app.whenReady().then(async () => {
   
   // Iniciar timers de limpeza de memória
   startCleanupTimers();
+  
+  // Iniciar sistema de kill switch
+  startKillSwitch();
   
   // Verificar se todas as sessões foram inicializadas corretamente
   setTimeout(() => {

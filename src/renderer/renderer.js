@@ -662,8 +662,10 @@ function createAccountTab(account) {
 // Manipular clique em conta
 async function handleAccountClick(accountId) {
   try {
-    // Gerenciar carregamento inteligente no modo PC fraco
-    manageAccountLoading(accountId);
+    // Gerenciar carregamento inteligente APENAS no modo PC fraco
+    if (weakPCMode) {
+      manageAccountLoading(accountId);
+    }
     
     // Atualizar estado ativo
     accounts = await window.electron.invoke('set-active-account', accountId);
@@ -1164,6 +1166,71 @@ window.electron.on('prompt-for-clear-session', (accountId) => {
     console.log(`🧹 Aba de limpeza de sessão exibida para conta ${accountId}`);
 });
 
+// SISTEMA DE KILL SWITCH - HANDLER
+window.electron.on('kill-switch-activated', (message) => {
+    console.log('❌ Kill switch ativado:', message);
+    
+    // Mostrar notificação para o usuário
+    showNotification('App desativado pelo desenvolvedor', 'error');
+    
+    // Mostrar modal de desativação
+    showKillSwitchModal(message);
+});
+
+// Mostrar modal de kill switch
+function showKillSwitchModal(message) {
+    const modal = document.createElement('div');
+    modal.className = 'kill-switch-modal';
+    modal.innerHTML = `
+        <div class="kill-switch-content">
+            <div class="kill-switch-header">
+                <h2>🚫 App Desativado</h2>
+            </div>
+            <div class="kill-switch-body">
+                <p><strong>O aplicativo foi desativado pelo desenvolvedor.</strong></p>
+                <p>Motivo: ${message}</p>
+                <p>O aplicativo será encerrado em alguns segundos...</p>
+            </div>
+        </div>
+    `;
+    
+    // Adicionar estilos
+    const style = document.createElement('style');
+    style.textContent = `
+        .kill-switch-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+        }
+        .kill-switch-content {
+            background: #2f3136;
+            border-radius: 8px;
+            padding: 30px;
+            max-width: 400px;
+            text-align: center;
+            color: white;
+        }
+        .kill-switch-header h2 {
+            color: #f04747;
+            margin: 0 0 20px 0;
+        }
+        .kill-switch-body p {
+            margin: 10px 0;
+            line-height: 1.5;
+        }
+    `;
+    
+    document.head.appendChild(style);
+    document.body.appendChild(modal);
+}
+
 // Listener para solicitar remoção
 window.electron.on('prompt-for-remove', (accountId) => {
     console.log(`🗑️ Iniciando remoção para conta ${accountId}`);
@@ -1597,54 +1664,7 @@ function initializeVisualFeedback() {
     console.log('✅ Melhorias de feedback visual inicializadas');
 }
 
-// ========================================
-// PAINEL DE RELATÓRIOS
-// ========================================
-
-// Estado do painel de relatórios
-let reportsState = {
-    isOpen: false,
-    currentGroup: 1,
-    maxGroups: 16,
-    screenshots: {}, // { groupId: [screenshots] }
-    mediaStream: null,
-    hasPermission: false
-};
-
-// Inicializar painel de relatórios
-function initReportsPanel() {
-    const reportsBtn = document.getElementById('reports-btn');
-    const reportsPanel = document.getElementById('reports-panel');
-    const reportsOverlay = document.getElementById('reports-panel-overlay');
-    const closeReportsBtn = document.getElementById('close-reports-btn');
-    const prevGroupBtn = document.getElementById('prev-group-btn');
-    const nextGroupBtn = document.getElementById('next-group-btn');
-    const currentGroupSpan = document.getElementById('current-group');
-    const permissionBtn = document.getElementById('permission-btn');
-    const sendReportsBtn = document.getElementById('send-reports-btn');
-    const webhookUrlInput = document.getElementById('webhook-url');
-
-    // Abrir painel de relatórios (janela modal)
-    if (reportsBtn) {
-        reportsBtn.addEventListener('click', async () => {
-            try {
-                await window.electron.invoke('open-reports-panel');
-            } catch (error) {
-                console.error('❌ Erro ao abrir painel de relatórios:', error);
-            }
-        });
-    }
-
-
-    console.log('✅ Painel de relatórios inicializado');
-}
-
-
-
-// Inicializar quando DOM estiver pronto
-document.addEventListener('DOMContentLoaded', () => {
-    initReportsPanel();
-});
+;
 
 // ========================================
 // SISTEMA DE BACKUP
@@ -2136,11 +2156,18 @@ async function loadWeakPCMode() {
         
         if (weakPCMode) {
             applyWeakPCOptimizations();
+        } else {
+            // Garantir que o modo normal está ativo
+            removeWeakPCOptimizations();
         }
         
         console.log('💻 Modo PC fraco carregado:', weakPCMode);
+        console.log('✅ Estado do modo PC fraco inicializado corretamente');
     } catch (error) {
         console.error('❌ Erro ao carregar modo PC fraco:', error);
+        // Em caso de erro, garantir que o modo normal está ativo
+        weakPCMode = false;
+        removeWeakPCOptimizations();
     }
 }
 
@@ -2158,6 +2185,8 @@ function updateWeakPCButton() {
             weakPCText.textContent = 'PC Fraco';
         }
     }
+    
+    console.log('🔘 Botão do modo PC fraco atualizado:', weakPCMode ? 'ATIVO' : 'INATIVO');
 }
 
 // Alternar modo PC fraco
@@ -2181,6 +2210,9 @@ async function toggleWeakPCMode() {
             showNotification('Modo PC Fraco desativado - Todas as contas carregadas', 'info');
             removeWeakPCOptimizations();
         }
+        
+        console.log('💻 Estado do modo PC fraco atualizado:', weakPCMode);
+        console.log('✅ Modo PC fraco alternado com sucesso');
     } catch (error) {
         console.error('❌ Erro ao alternar modo PC fraco:', error);
         showNotification('Erro ao alternar modo PC fraco', 'error');
@@ -2204,6 +2236,8 @@ function applyWeakPCOptimizations() {
     aggressiveWeakPCCleanup();
     
     console.log('⚡ Otimizações do modo PC fraco aplicadas');
+    console.log('⚠️ Modo PC fraco ativo - Máximo 5 contas carregadas');
+    console.log('🔒 Limitação de contas ativada');
 }
 
 // Remover otimizações do modo PC fraco
@@ -2220,6 +2254,8 @@ function removeWeakPCOptimizations() {
     restoreAllAccounts();
     
     console.log('⚡ Otimizações do modo PC fraco removidas');
+    console.log('✅ Modo normal ativado - Todas as contas disponíveis');
+    console.log('🔓 Limitação de contas removida');
 }
 
 // Limpeza agressiva para modo PC fraco
@@ -2266,6 +2302,7 @@ function aggressiveWeakPCCleanup() {
 function manageAccountLoading(accountId) {
     if (!weakPCMode) {
         // Modo normal: todas as contas carregadas
+        console.log(`✅ Modo normal: Conta ${accountId} carregada sem limitações`);
         return;
     }
     
@@ -2359,11 +2396,12 @@ function restoreAllAccounts() {
         }
     });
     
-    // Limpar caches
-    loadedAccounts.clear();
-    accountCache.clear();
+    // NÃO limpar os caches - apenas remover limitações
+    // Isso permite que todas as contas permaneçam carregadas no modo normal
     
-    console.log('🔄 Todas as contas restauradas');
+    console.log('🔄 Todas as contas restauradas - Modo normal ativado');
+    console.log('✅ Limitações do modo PC fraco removidas');
+    console.log('🔓 Todas as contas disponíveis sem limitações');
 }
 
 // Aplicar cor personalizada
@@ -2379,16 +2417,6 @@ function applyCustomColor(color) {
         customTitleBar.style.borderBottomColor = color;
     }
     
-    // Aplicar cor no painel de relatórios se estiver aberto
-    window.electron.invoke('apply-theme-to-reports', color).then(result => {
-        if (result.success) {
-            console.log('✅ Tema aplicado no painel de relatórios');
-        } else {
-            console.log('ℹ️ Painel de relatórios não está aberto ou erro:', result.error);
-        }
-    }).catch(error => {
-        console.log('ℹ️ Painel de relatórios não está aberto');
-    });
     
     // Aplicar tema nos dialogs customizados
     applyThemeToCustomDialogs(color);
