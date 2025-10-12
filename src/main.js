@@ -1,8 +1,6 @@
 const { app, BrowserWindow, BrowserView, ipcMain, session, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const https = require('https');
-const http = require('http');
 // Auto-updater removido para evitar falsos alarmes do Windows Defender
 
 // Usar pasta de dados do usuário para persistência permanente
@@ -596,39 +594,39 @@ async function aggressiveMemoryCleanup() {
     // APENAS DESTRUIR BROWSERVIEWS SE O MODO PC FRACO ESTIVER ATIVO
     if (isWeakPC) {
       console.log('💻 Modo PC Fraco ativo - Aplicando limpeza agressiva de BrowserViews');
-      
-      // DESTRUIÇÃO AGRESSIVA: Manter apenas 1 BrowserView ativa
-      const activeAccount = accounts.find(acc => acc.active);
-      const viewsToDestroy = [];
-      
-      browserViews.forEach((view, accountId) => {
-        if (accountId !== activeAccount?.id) {
-          try {
-            // DESTRUIR completamente BrowserViews inativas
-            if (!view.webContents.isDestroyed()) {
-              mainWindow.removeBrowserView(view);
-              view.webContents.destroy();
-              viewsToDestroy.push(accountId);
-            }
-          } catch (e) {
-            // Ignorar erros silenciosamente
+    
+    // DESTRUIÇÃO AGRESSIVA: Manter apenas 1 BrowserView ativa
+    const activeAccount = accounts.find(acc => acc.active);
+    const viewsToDestroy = [];
+    
+    browserViews.forEach((view, accountId) => {
+      if (accountId !== activeAccount?.id) {
+        try {
+          // DESTRUIR completamente BrowserViews inativas
+          if (!view.webContents.isDestroyed()) {
+            mainWindow.removeBrowserView(view);
+            view.webContents.destroy();
+            viewsToDestroy.push(accountId);
           }
-        } else {
-          // Manter apenas a view ativa
-          try {
-            if (!view.webContents.isDestroyed()) {
-              view.webContents.setBackgroundThrottling(false);
-            }
-          } catch (e) {
-            // Ignorar erros silenciosamente
-          }
+        } catch (e) {
+          // Ignorar erros silenciosamente
         }
-      });
-      
-      // Remover referências das BrowserViews destruídas
-      viewsToDestroy.forEach(accountId => {
-        browserViews.delete(accountId);
-      });
+      } else {
+        // Manter apenas a view ativa
+        try {
+          if (!view.webContents.isDestroyed()) {
+            view.webContents.setBackgroundThrottling(false);
+          }
+        } catch (e) {
+          // Ignorar erros silenciosamente
+        }
+      }
+    });
+    
+    // Remover referências das BrowserViews destruídas
+    viewsToDestroy.forEach(accountId => {
+      browserViews.delete(accountId);
+    });
     } else {
       console.log('⚡ Modo normal - Preservando todas as BrowserViews');
     }
@@ -1994,17 +1992,17 @@ function aggressiveBrowserViewCleanup() {
         const [accountId, view] = viewsArray[i];
         
         // NÃO destruir a conta ativa
-        if (accountId !== activeAccount?.id) {
-          try {
-            if (!view.webContents.isDestroyed()) {
-              mainWindow.removeBrowserView(view);
-              view.webContents.destroy();
-              browserViews.delete(accountId);
-              destroyedCount++;
+      if (accountId !== activeAccount?.id) {
+        try {
+          if (!view.webContents.isDestroyed()) {
+            mainWindow.removeBrowserView(view);
+            view.webContents.destroy();
+            browserViews.delete(accountId);
+            destroyedCount++;
               console.log(`💥 BrowserView ${accountId} destruída (limite de 5 atingido)`);
-            }
-          } catch (error) {
-            console.error(`❌ Erro ao destruir BrowserView ${accountId}:`, error);
+          }
+        } catch (error) {
+          console.error(`❌ Erro ao destruir BrowserView ${accountId}:`, error);
           }
         }
       }
