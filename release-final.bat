@@ -26,7 +26,7 @@ pause
 echo.
 echo [GIT] Fazendo commit das mudancas...
 git add .
-git commit -m "Release v%VERSION% - Kill switch, backup manual, modo PC fraco e otimizações"
+git commit -m "Release v%VERSION% - The Rell Seas is real"
 if %errorlevel% neq 0 (
     echo [ERROR] Falha ao fazer commit
     echo [INFO] Pressione qualquer tecla para sair...
