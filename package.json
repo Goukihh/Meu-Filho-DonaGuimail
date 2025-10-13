@@ -1,6 +1,6 @@
 {
   "name": "meu-filho",
-  "version": "1.3.9",
+  "version": "1.4.0",
   "description": "Um cliente Discord para múltiplas contas com mascaramento avançado de navegador.",
   "main": "src/main.js",
   "scripts": {
@@ -11,7 +11,7 @@
     "build:installer": "electron-builder --win nsis --publish never",
     "build:single": "electron-builder --win nsis --publish never",
     "build:publish": "electron-builder --win nsis --publish always",
-    "build:release": "electron-builder --win nsis --publish always",
+    "build:release": "electron-builder --win nsis --publish always"
   },
   "keywords": [
     "discord",
