@@ -1,35 +1,23 @@
-# 🔒 Kill Switch - Meu Filho
+# Kill Switch Server
 
-Servidor de controle remoto para o app "Meu Filho".
+Servidor de controle remoto para Meu Filho DonaGuimail.
 
-## 🚀 Deploy no Railway
+## Como usar:
 
-1. Acesse [railway.app](https://railway.app)
-2. Clique "Login with GitHub"
-3. Clique "New Project"
-4. Clique "Deploy from GitHub repo"
-5. Selecione este repositório
-6. Railway fará deploy automático!
-
-## 📝 Configuração
-
-Após o deploy, você receberá uma URL como:
-`https://meu-filho-kill-switch-production.up.railway.app`
-
-Use esta URL no arquivo `src/main.js` linha 642:
-```javascript
-const KILL_SWITCH_URL = 'https://SUA-URL-AQUI.up.railway.app/api/status';
+1. Instalar dependências:
+```bash
+npm install
 ```
 
-## 🎮 Como usar
+2. Executar servidor:
+```bash
+npm start
+```
 
-1. Acesse a URL do seu servidor
-2. Clique "DESATIVAR APP" para encerrar todas as instâncias
-3. Clique "ATIVAR APP" para permitir funcionamento
+3. Acessar painel: http://localhost:3000
 
-## 🔧 Estrutura
+## Deploy no Railway:
 
-- `server.js` - Servidor Express
-- `package.json` - Dependências
-- `README.md` - Este arquivo
-
+1. Conectar repositório no Railway
+2. Configurar pasta: kill-switch
+3. Deploy automático

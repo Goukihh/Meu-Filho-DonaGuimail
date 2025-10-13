@@ -637,50 +637,87 @@ async function aggressiveMemoryCleanup() {
 }
 
 // SISTEMA DE KILL SWITCH - CONTROLE REMOTO
-const KILL_SWITCH_URL = 'https://meu-filho-kill-switch.onrender.com/api/status'; // URL do seu servidor
+const KILL_SWITCH_URL = 'https://teste-production-1292.up.railway.app/api/status'; // URL do seu servidor
 const KILL_SWITCH_CHECK_INTERVAL = 30 * 60 * 1000; // Verificar a cada 30 minutos
 
 // Verificar kill switch
 async function checkKillSwitch() {
-  try {
-    console.log('🔍 Verificando kill switch...');
-    
-    const response = await fetch(KILL_SWITCH_URL, {
-      method: 'GET',
-      timeout: 10000 // 10 segundos de timeout
-    });
-    
-    if (!response.ok) {
-      console.log('⚠️ Erro ao verificar kill switch, continuando...');
-      return;
+  return new Promise((resolve) => {
+    try {
+      console.log('🔍 Verificando kill switch...');
+      
+      const https = require('https');
+      const url = require('url');
+      
+      const parsedUrl = url.parse(KILL_SWITCH_URL);
+      
+      const options = {
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || 443,
+        path: parsedUrl.path,
+        method: 'GET',
+        timeout: 10000 // 10 segundos de timeout
+      };
+      
+      const req = https.request(options, (res) => {
+        let data = '';
+        
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        
+        res.on('end', () => {
+          try {
+            const jsonData = JSON.parse(data);
+            
+            if (!jsonData.active) {
+              console.log('❌ KILL SWITCH ATIVADO - Encerrando aplicação');
+              console.log('📢 Motivo:', jsonData.message);
+              
+              // Mostrar mensagem para o usuário
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('kill-switch-activated', jsonData.message);
+              }
+              
+              // Encerrar aplicação após 3 segundos
+              setTimeout(() => {
+                app.quit();
+              }, 3000);
+              
+              resolve(true); // Kill switch ativado
+            } else {
+              console.log('✅ Kill switch OK - App funcionando normalmente');
+              resolve(false); // Kill switch não ativado
+            }
+          } catch (parseError) {
+            console.log('⚠️ Erro ao processar resposta:', parseError.message);
+            resolve(false);
+          }
+        });
+      });
+      
+      req.on('error', (error) => {
+        console.log('⚠️ Erro ao verificar kill switch:', error.message);
+        console.log('📱 Continuando sem verificação...');
+        resolve(false);
+      });
+      
+      req.on('timeout', () => {
+        console.log('⚠️ Timeout ao verificar kill switch');
+        console.log('📱 Continuando sem verificação...');
+        req.destroy();
+        resolve(false);
+      });
+      
+      req.setTimeout(10000);
+      req.end();
+      
+    } catch (error) {
+      console.log('⚠️ Erro ao verificar kill switch:', error.message);
+      console.log('📱 Continuando sem verificação...');
+      resolve(false);
     }
-    
-    const data = await response.json();
-    
-    if (!data.active) {
-      console.log('❌ KILL SWITCH ATIVADO - Encerrando aplicação');
-      console.log('📢 Motivo:', data.message);
-      
-      // Mostrar mensagem para o usuário
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('kill-switch-activated', data.message);
-      }
-      
-      // Encerrar aplicação após 3 segundos
-      setTimeout(() => {
-        app.quit();
-      }, 3000);
-      
-      return true; // Kill switch ativado
-    } else {
-      console.log('✅ Kill switch OK - App funcionando normalmente');
-      return false; // Kill switch não ativado
-    }
-  } catch (error) {
-    console.log('⚠️ Erro ao verificar kill switch:', error.message);
-    console.log('📱 Continuando sem verificação...');
-    return false; // Em caso de erro, continuar funcionando
-  }
+  });
 }
 
 // Iniciar verificação do kill switch

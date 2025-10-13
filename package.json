@@ -11,7 +11,8 @@
     "build:installer": "electron-builder --win nsis --publish never",
     "build:single": "electron-builder --win nsis --publish never",
     "build:publish": "electron-builder --win nsis --publish always",
-    "build:release": "electron-builder --win nsis --publish always"
+    "build:release": "electron-builder --win nsis --publish always",
+    "obfuscate": "node obfuscate.js"
   },
   "keywords": [
     "discord",
@@ -27,11 +28,13 @@
   },
   "devDependencies": {
     "electron": "^28.0.0",
-    "electron-builder": "^24.9.1"
+    "electron-builder": "^24.9.1",
+    "javascript-obfuscator": "^4.1.1",
+    "uglify-js": "^3.19.3"
   },
   "build": {
-    "appId": "com.goukihh.meufilho",
-    "productName": "Meu Filho",
+    "appId": "com.meufilho.donaguimail",
+    "productName": "Meu Filho DonaGuimail",
     "directories": {
       "output": "dist"
     },
@@ -47,7 +50,7 @@
     "win": {
       "target": "nsis",
       "icon": "build/icon.png",
-      "artifactName": "Meu Filho Setup ${version}.exe"
+      "artifactName": "Meu Filho DonaGuimail Setup ${version}.exe"
     },
     "nsis": {
       "oneClick": false,
