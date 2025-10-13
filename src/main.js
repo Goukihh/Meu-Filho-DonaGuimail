@@ -638,19 +638,51 @@ async function aggressiveMemoryCleanup() {
 
 // SISTEMA DE KILL SWITCH - CONTROLE REMOTO
 const KILL_SWITCH_URL = 'https://teste-production-1292.up.railway.app/api/status'; // URL do seu servidor
-const KILL_SWITCH_CHECK_INTERVAL = 30 * 60 * 1000; // Verificar a cada 30 minutos
+const KILL_SWITCH_CHECK_INTERVAL = 30 * 60 * 1000; // Verificar a cada 30 minutos (produção)
 
-// Verificar kill switch
+// PROTEÇÃO OFFLINE - Cache do status
+let lastKnownStatus = null;
+let offlineProtectionActive = false;
+const OFFLINE_PROTECTION_DURATION = 24 * 60 * 60 * 1000; // 24 horas offline máximo
+const KILL_SWITCH_STATUS_FILE = path.join(userDataPath, 'kill-switch-status.json');
+
+// Carregar status salvo
+function loadKillSwitchStatus() {
+  try {
+    if (fs.existsSync(KILL_SWITCH_STATUS_FILE)) {
+      const data = fs.readFileSync(KILL_SWITCH_STATUS_FILE, 'utf8');
+      lastKnownStatus = JSON.parse(data);
+      console.log('📁 Status do kill switch carregado:', lastKnownStatus);
+    }
+  } catch (error) {
+    console.log('⚠️ Erro ao carregar status do kill switch:', error.message);
+  }
+}
+
+// Salvar status atual
+function saveKillSwitchStatus() {
+  try {
+    if (lastKnownStatus) {
+      fs.writeFileSync(KILL_SWITCH_STATUS_FILE, JSON.stringify(lastKnownStatus, null, 2));
+      console.log('💾 Status do kill switch salvo');
+    }
+  } catch (error) {
+    console.log('⚠️ Erro ao salvar status do kill switch:', error.message);
+  }
+}
+
+// Verificar kill switch com proteção offline
 async function checkKillSwitch() {
   return new Promise((resolve) => {
     try {
       console.log('🔍 Verificando kill switch...');
-      
+      console.log('🌐 URL:', KILL_SWITCH_URL);
+
       const https = require('https');
       const url = require('url');
-      
+
       const parsedUrl = url.parse(KILL_SWITCH_URL);
-      
+
       const options = {
         hostname: parsedUrl.hostname,
         port: parsedUrl.port || 443,
@@ -658,75 +690,151 @@ async function checkKillSwitch() {
         method: 'GET',
         timeout: 10000 // 10 segundos de timeout
       };
-      
+
       const req = https.request(options, (res) => {
         let data = '';
-        
+
         res.on('data', (chunk) => {
           data += chunk;
         });
-        
+
         res.on('end', () => {
           try {
+            console.log('📡 Resposta recebida:', data);
             const jsonData = JSON.parse(data);
+            console.log('📊 Status atual:', jsonData);
             
+            // Salvar status atual para proteção offline
+            lastKnownStatus = {
+              active: jsonData.active,
+              message: jsonData.message,
+              timestamp: Date.now()
+            };
+            
+            // Salvar status no arquivo
+            saveKillSwitchStatus();
+
             if (!jsonData.active) {
               console.log('❌ KILL SWITCH ATIVADO - Encerrando aplicação');
               console.log('📢 Motivo:', jsonData.message);
-              
+
               // Mostrar mensagem para o usuário
               if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('kill-switch-activated', jsonData.message);
               }
-              
+
               // Encerrar aplicação após 3 segundos
               setTimeout(() => {
                 app.quit();
               }, 3000);
-              
+
               resolve(true); // Kill switch ativado
             } else {
               console.log('✅ Kill switch OK - App funcionando normalmente');
+              offlineProtectionActive = false; // Reset proteção offline
               resolve(false); // Kill switch não ativado
             }
           } catch (parseError) {
             console.log('⚠️ Erro ao processar resposta:', parseError.message);
+            handleOfflineProtection();
             resolve(false);
           }
         });
       });
-      
+
       req.on('error', (error) => {
         console.log('⚠️ Erro ao verificar kill switch:', error.message);
-        console.log('📱 Continuando sem verificação...');
+        console.log('📱 Modo offline detectado - Ativando proteção...');
+        handleOfflineProtection();
         resolve(false);
       });
-      
+
       req.on('timeout', () => {
         console.log('⚠️ Timeout ao verificar kill switch');
-        console.log('📱 Continuando sem verificação...');
+        console.log('📱 Modo offline detectado - Ativando proteção...');
+        handleOfflineProtection();
         req.destroy();
         resolve(false);
       });
-      
-      req.setTimeout(10000);
+
+      req.setTimeout(30000); // 30 segundos para produção
       req.end();
-      
+
     } catch (error) {
       console.log('⚠️ Erro ao verificar kill switch:', error.message);
-      console.log('📱 Continuando sem verificação...');
+      console.log('📱 Modo offline detectado - Ativando proteção...');
+      handleOfflineProtection();
       resolve(false);
     }
   });
 }
 
+// Proteção offline - Se estava desativado, manter desativado
+function handleOfflineProtection() {
+  if (lastKnownStatus && !lastKnownStatus.active) {
+    const timeSinceLastCheck = Date.now() - lastKnownStatus.timestamp;
+    
+    if (timeSinceLastCheck < OFFLINE_PROTECTION_DURATION) {
+      console.log('🔒 PROTEÇÃO OFFLINE ATIVA - App permanece desativado');
+      console.log('📢 Motivo offline:', lastKnownStatus.message);
+      
+      offlineProtectionActive = true;
+      
+      // Mostrar mensagem para o usuário
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('kill-switch-activated', 
+          `App desativado (modo offline): ${lastKnownStatus.message}`);
+      }
+      
+      // Encerrar aplicação após 3 segundos
+      setTimeout(() => {
+        app.quit();
+      }, 3000);
+    }
+  }
+}
+
 // Iniciar verificação do kill switch
 function startKillSwitch() {
   console.log('🔒 Sistema de kill switch iniciado');
-  
+
+  // Carregar status salvo
+  loadKillSwitchStatus();
+
+  // Verificar proteção offline na inicialização
+  if (lastKnownStatus && !lastKnownStatus.active) {
+    const timeSinceLastCheck = Date.now() - lastKnownStatus.timestamp;
+    
+    if (timeSinceLastCheck < OFFLINE_PROTECTION_DURATION) {
+      console.log('🔒 PROTEÇÃO OFFLINE - App foi desativado anteriormente');
+      console.log('📢 Motivo:', lastKnownStatus.message);
+      console.log('🔄 Verificando servidor para atualizar status...');
+      
+      // Verificar servidor mesmo com proteção offline ativa
+      checkKillSwitch().then((killSwitchActivated) => {
+        if (!killSwitchActivated) {
+          console.log('✅ Servidor respondeu - App pode funcionar');
+          // Não encerrar o app se servidor respondeu que está ativo
+        } else {
+          console.log('❌ Servidor confirmou desativação');
+          // Encerrar app se servidor confirmou desativação
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('kill-switch-activated', 
+              `App desativado (modo offline): ${lastKnownStatus.message}`);
+          }
+          setTimeout(() => {
+            app.quit();
+          }, 3000);
+        }
+      });
+      
+      return; // Não iniciar verificação normal
+    }
+  }
+
   // Verificar imediatamente
   checkKillSwitch();
-  
+
   // Verificar a cada 30 minutos
   killSwitchInterval = setInterval(checkKillSwitch, KILL_SWITCH_CHECK_INTERVAL);
 }
@@ -1757,7 +1865,7 @@ async function checkForUpdates() {
       resolve({ hasUpdate: false, error: error.message });
     });
     
-    req.setTimeout(10000, () => {
+    req.setTimeout(30000, () => {
       console.log('⏰ Timeout na verificação de atualizações');
       req.destroy();
       resolve({ hasUpdate: false, error: 'Timeout na verificação de atualizações' });
