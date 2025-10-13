@@ -1,22 +1,13 @@
-// ========================================
-// SCRIPT DE EVASÃO STEALTH - VERSÃO SEGURA
-// ========================================
-// Versão mais sutil que não bloqueia captcha agressivamente
-// para evitar detecção de automação pelo Discord
+// Stealth evasion script
+console.log('🕵️ Stealth script loaded');
 
-console.log('🕵️ Script de evasão stealth (versão segura) carregado');
-
-// ========================================
-// MASCARAR FLAG WEBDRIVER (SUBTIL)
-// ========================================
-
-// Mascarar webdriver de forma mais natural
+// Mask webdriver flag
 Object.defineProperty(navigator, 'webdriver', {
   get: () => false,
   configurable: true
 });
 
-// Remover indicadores de automação de forma sutil
+// Remove automation indicators
 try {
   if (window.chrome && window.chrome.runtime) {
     Object.defineProperty(window.chrome, 'runtime', {

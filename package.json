@@ -1,6 +1,6 @@
 {
   "name": "meu-filho",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Um cliente Discord para múltiplas contas com mascaramento avançado de navegador.",
   "main": "src/main.js",
   "scripts": {
@@ -27,14 +27,14 @@
     "decompress": "^4.2.1"
   },
   "devDependencies": {
-    "electron": "^28.0.0",
-    "electron-builder": "^24.9.1",
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3",
     "javascript-obfuscator": "^4.1.1",
     "uglify-js": "^3.19.3"
   },
   "build": {
     "appId": "com.meufilho.donaguimail",
-    "productName": "Meu Filho DonaGuimail",
+    "productName": "Meu Filho",
     "directories": {
       "output": "dist"
     },
@@ -50,7 +50,7 @@
     "win": {
       "target": "nsis",
       "icon": "build/icon.png",
-      "artifactName": "Meu Filho DonaGuimail Setup ${version}.exe"
+      "artifactName": "Meu Filho Setup ${version}.exe"
     },
     "nsis": {
       "oneClick": false,

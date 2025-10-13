@@ -1,13 +1,21 @@
 const { app, BrowserWindow, BrowserView, ipcMain, session, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-// Auto-updater removido para evitar falsos alarmes do Windows Defender
+// Sistema de atualizações desabilitado
+
+// Sistema de logs condicionais
+const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev');
+const log = isDev ? console.log : () => {};
+const logError = console.error; // Erros sempre são logados
+const logWarn = isDev ? console.warn : () => {};
+
+// Performance utilities removed - not used
 
 // Usar pasta de dados do usuário para persistência permanente
 const userDataPath = app.getPath('userData');
 const accountsFilePath = path.join(userDataPath, 'accounts.json');
 
-// Função para copiar diretório recursivamente (otimizada)
+// Função para copiar diretório recursivamente
 async function copyDirectory(src, dest) {
   try {
     // Criar diretório de destino se não existir
@@ -39,49 +47,14 @@ async function copyDirectory(src, dest) {
       }
     }
   } catch (error) {
-    console.error('Erro ao copiar diretorio:', error);
+    logError('Erro ao copiar diretorio:', error);
     throw error;
   }
 }
 
-// Função para copiar diretório recursivamente (versão original que funcionava)
-async function copyDirectoryUltraOptimized(src, dest) {
-  try {
-    // Criar diretório de destino se não existir
-    if (!fs.existsSync(dest)) {
-      fs.mkdirSync(dest, { recursive: true });
-    }
-    
-    // Ler conteúdo do diretório fonte
-    const entries = fs.readdirSync(src, { withFileTypes: true });
-    
-    for (const entry of entries) {
-      const srcPath = path.join(src, entry.name);
-      const destPath = path.join(dest, entry.name);
-      
-      if (entry.isDirectory()) {
-        // Pular apenas pastas de cache desnecessárias
-        if (entry.name.includes('Cache') || entry.name.includes('Code Cache') || 
-            entry.name.includes('GPUCache') || entry.name.includes('DawnCache') ||
-            entry.name.includes('blob_storage') || entry.name.includes('databases') ||
-            entry.name.includes('Service Worker') || entry.name.includes('Network')) {
-          continue;
-        }
-        
-        // Recursivamente copiar subdiretórios
-        await copyDirectoryUltraOptimized(srcPath, destPath);
-      } else {
-        // Copiar arquivo
-        fs.copyFileSync(srcPath, destPath);
-      }
-    }
-  } catch (error) {
-    console.error('Erro ao copiar diretorio:', error);
-    throw error;
-  }
-}
+// Função duplicada removida
 
-// Função para copiar apenas Partitions essenciais (versão original que funcionava)
+// Função para copiar Partitions essenciais
 async function copyEssentialPartitions(src, dest) {
   try {
     if (!fs.existsSync(dest)) {
@@ -103,14 +76,14 @@ async function copyEssentialPartitions(src, dest) {
       const srcPath = session.path;
       const destPath = path.join(dest, session.name);
       
-      // Usar a função de cópia original que funcionava
+      // Usar função de cópia original
       await copyDirectory(srcPath, destPath);
       sessionCount++;
     }
     
-    console.log(`Sessoes copiadas: ${sessionCount} (TODAS as contas salvas)`);
+    log(`Sessoes copiadas: ${sessionCount} (TODAS as contas salvas)`);
   } catch (error) {
-    console.error('Erro ao copiar Partitions essenciais:', error);
+    logError('Erro ao copiar Partitions essenciais:', error);
     throw error;
   }
 }
@@ -127,7 +100,7 @@ async function createZipFile(sourceDir, zipPath) {
   
   return new Promise((resolve, reject) => {
     output.on('close', () => {
-      console.log(`ZIP criado: ${archive.pointer()} bytes`);
+      log(`ZIP criado: ${archive.pointer()} bytes`);
       resolve();
     });
     
@@ -146,7 +119,7 @@ if (!fs.existsSync(userDataPath)) {
   fs.mkdirSync(userDataPath, { recursive: true });
 }
 
-console.log(`📁 Dados salvos em: ${userDataPath}`);
+log(`📁 Dados salvos em: ${userDataPath}`);
 
 let mainWindow;
 let accounts = [];
@@ -160,6 +133,37 @@ let isRemoving = false; // Controle para evitar recriação durante remoção
 let isAddingAccount = false; // Controle para evitar recriação durante adição de conta
 let cleanupInterval; // Variável para controle de limpeza de memória
 let killSwitchInterval; // Variável para controle do kill switch
+let cleanupTimer; // Timer de limpeza normal
+let aggressiveTimer; // Timer de limpeza agressiva
+
+// Função para limpar TODOS os timers
+function cleanupAllTimers() {
+  log('🧹 Limpando todos os timers...');
+  
+  if (killSwitchInterval) {
+    clearInterval(killSwitchInterval);
+    killSwitchInterval = null;
+    log('✅ Kill switch timer limpo');
+  }
+  
+  if (cleanupTimer) {
+    clearInterval(cleanupTimer);
+    cleanupTimer = null;
+    log('✅ Cleanup timer limpo');
+  }
+  
+  if (aggressiveTimer) {
+    clearInterval(aggressiveTimer);
+    aggressiveTimer = null;
+    log('✅ Aggressive timer limpo');
+  }
+  
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = null;
+    log('✅ Cleanup interval limpo');
+  }
+}
 
 // Contas padrão
 const defaultAccounts = [
@@ -204,12 +208,12 @@ function getDirectorySize(dirPath) {
 function getRandomUserAgent() {
   try {
     if (!REALISTIC_USER_AGENTS || REALISTIC_USER_AGENTS.length === 0) {
-      console.warn('⚠️ Array de User-Agents vazio, usando padrão');
+      logWarn('⚠️ Array de User-Agents vazio, usando padrão');
       return REALISTIC_USER_AGENT;
     }
     return REALISTIC_USER_AGENTS[Math.floor(Math.random() * REALISTIC_USER_AGENTS.length)];
   } catch (error) {
-    console.warn('⚠️ Erro ao obter User-Agent aleatório, usando padrão:', error);
+    logWarn('⚠️ Erro ao obter User-Agent aleatório, usando padrão:', error);
     return REALISTIC_USER_AGENT;
   }
 }
@@ -223,15 +227,15 @@ function readAccounts() {
     if (fs.existsSync(accountsFilePath)) {
       const data = fs.readFileSync(accountsFilePath, 'utf-8');
       const parsedAccounts = JSON.parse(data);
-      console.log('📖 Contas lidas do arquivo:', parsedAccounts.length);
+      log('📖 Contas lidas do arquivo:', parsedAccounts.length);
       return parsedAccounts;
     } else {
-      console.log('📝 Arquivo de contas não existe, criando com contas padrão');
+      log('📝 Arquivo de contas não existe, criando com contas padrão');
       writeAccounts(defaultAccounts);
       return defaultAccounts;
     }
   } catch (error) {
-    console.error('❌ Erro ao ler contas:', error);
+    logError('❌ Erro ao ler contas:', error);
     return defaultAccounts;
   }
 }
@@ -240,7 +244,7 @@ function writeAccounts(accountsToSave) {
   try {
     // Validar dados antes de salvar
     if (!Array.isArray(accountsToSave)) {
-      console.error('❌ Dados inválidos para salvar - não é um array');
+      logError('❌ Dados inválidos para salvar - não é um array');
       return false;
     }
     
@@ -270,7 +274,7 @@ function writeAccounts(accountsToSave) {
     const parsedData = JSON.parse(savedData);
     
     if (parsedData.length === processedAccounts.length) {
-      console.log(`💾 ${processedAccounts.length} contas salvas com sucesso`);
+      log(`💾 ${processedAccounts.length} contas salvas com sucesso`);
       
       // Remover backup se salvou corretamente
       if (fs.existsSync(backupPath)) {
@@ -279,20 +283,20 @@ function writeAccounts(accountsToSave) {
       
     return true;
     } else {
-      console.error('❌ Verificação de salvamento falhou');
+      logError('❌ Verificação de salvamento falhou');
       return false;
     }
   } catch (error) {
-    console.error('❌ Erro ao salvar contas:', error);
+    logError('❌ Erro ao salvar contas:', error);
     
     // Tentar restaurar backup se existir
     const backupPath = accountsFilePath + '.backup';
     if (fs.existsSync(backupPath)) {
       try {
         fs.copyFileSync(backupPath, accountsFilePath);
-        console.log('🔄 Backup restaurado após erro');
+        log('🔄 Backup restaurado após erro');
       } catch (restoreError) {
-        console.error('❌ Erro ao restaurar backup:', restoreError);
+        logError('❌ Erro ao restaurar backup:', restoreError);
       }
     }
     
@@ -363,11 +367,11 @@ ipcMain.handle('window-is-maximized', () => {
 // Inicializar sessão para uma conta com mascaramento avançado
 async function initializeSessionForAccount(account) {
   try {
-    console.log(`🔐 Inicializando sessão para: ${account.name} (${account.id})`);
+    log(`🔐 Inicializando sessão para: ${account.name} (${account.id})`);
     
     // Verificar se a conta já tem uma sessão
     if (sessionMap.has(account.id)) {
-      console.log(`⚠️ Sessão já existe para ${account.name}, reutilizando...`);
+      log(`⚠️ Sessão já existe para ${account.name}, reutilizando...`);
       return;
     }
     
@@ -377,11 +381,11 @@ async function initializeSessionForAccount(account) {
   // INJETAR SCRIPT DE EVASÃO STEALTH SEGURO
   const stealthSafeScriptPath = path.join(__dirname, 'stealth-safe.js');
   ses.setPreloads([stealthSafeScriptPath]);
-  console.log(`🕵️ Script de evasão stealth seguro injetado para: ${account.name}`);
+  log(`🕵️ Script de evasão stealth seguro injetado para: ${account.name}`);
   
   sessionMap.set(account.id, ses);
   
-    console.log(`🔐 Sessão criada para: ${account.name} (${partition})`);
+    log(`🔐 Sessão criada para: ${account.name} (${partition})`);
 
   // Configurar permissões
   ses.setPermissionRequestHandler((webContents, permission, callback) => {
@@ -389,13 +393,13 @@ async function initializeSessionForAccount(account) {
     const blockedPermissions = ['publickey-credentials-get', 'publickey-credentials-create', 'webauthn', 'fido', 'u2f'];
     
     if (allowedPermissions.includes(permission)) {
-      console.log(`✅ Permissão concedida: ${permission} para ${account.name}`);
+      log(`✅ Permissão concedida: ${permission} para ${account.name}`);
       callback(true);
     } else if (blockedPermissions.includes(permission)) {
-      console.log(`❌ [WEBAUTHN-BLOCK] Bloqueado: ${permission} para ${account.name}`);
+      log(`❌ [WEBAUTHN-BLOCK] Bloqueado: ${permission} para ${account.name}`);
       callback(false);
     } else {
-      console.log(`❌ Permissão negada: ${permission} para ${account.name}`);
+      log(`❌ Permissão negada: ${permission} para ${account.name}`);
       callback(false);
     }
   });
@@ -465,7 +469,7 @@ async function initializeSessionForAccount(account) {
   // Bloquear verificações de permissão do WebAuthn
   ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     if (permission === 'publickey-credentials-get' || permission === 'publickey-credentials-create') {
-      console.log(`[WEBAUTHN-BLOCK] Bloqueada verificação de permissão: ${permission}`);
+      log(`[WEBAUTHN-BLOCK] Bloqueada verificação de permissão: ${permission}`);
       return false;
     }
     return true;
@@ -475,10 +479,10 @@ async function initializeSessionForAccount(account) {
     callback(0);
   });
 
-  console.log(`✅ Sessão inicializada para ${account.name}`);
+  log(`✅ Sessão inicializada para ${account.name}`);
   
   } catch (error) {
-    console.error(`❌ Erro ao inicializar sessão para ${account.name}:`, error);
+    logError(`❌ Erro ao inicializar sessão para ${account.name}:`, error);
     throw error;
   }
 }
@@ -486,63 +490,61 @@ async function initializeSessionForAccount(account) {
 // Inicializar todas as sessões
 async function initializeSessions() {
   try {
-    console.log(`🔄 Inicializando sessões para ${accounts.length} contas...`);
+    log(`🔄 Inicializando sessões para ${accounts.length} contas...`);
     
   for (const account of accounts) {
       try {
     await initializeSessionForAccount(account);
-        console.log(`✅ Sessão inicializada para: ${account.name}`);
+        log(`✅ Sessão inicializada para: ${account.name}`);
       } catch (error) {
-        console.error(`❌ Erro ao inicializar sessão para ${account.name}:`, error);
+        logError(`❌ Erro ao inicializar sessão para ${account.name}:`, error);
         // Continuar com as outras contas mesmo se uma falhar
       }
     }
     
-    console.log(`✅ Todas as sessões inicializadas: ${sessionMap.size} sessões ativas`);
+    log(`✅ Todas as sessões inicializadas: ${sessionMap.size} sessões ativas`);
   
   // Verificar se todas as contas têm sessões
   const missingSessions = accounts.filter(acc => !sessionMap.has(acc.id));
   if (missingSessions.length > 0) {
-    console.log(`⚠️ ${missingSessions.length} contas sem sessão:`, missingSessions.map(acc => acc.name));
+    log(`⚠️ ${missingSessions.length} contas sem sessão:`, missingSessions.map(acc => acc.name));
   }
   
   } catch (error) {
-    console.error('❌ Erro crítico ao inicializar sessões:', error);
+    logError('❌ Erro crítico ao inicializar sessões:', error);
   }
 }
 
 // Cache inteligente: Pré-carregar sessões mais usadas
 async function preloadFrequentSessions() {
   try {
-    console.log('⚡ Iniciando pré-carregamento de sessões frequentes...');
+    log('⚡ Iniciando pré-carregamento de sessões frequentes...');
     
     // Carregar apenas as primeiras 3 contas ativas para performance
     const activeAccounts = accounts.filter(acc => acc.active).slice(0, 3);
-    console.log(`📊 ${activeAccounts.length} contas ativas encontradas`);
+    log(`📊 ${activeAccounts.length} contas ativas encontradas`);
     
     for (const account of activeAccounts) {
       try {
       if (!sessionMap.has(account.id)) {
-        console.log(`🚀 Pré-carregando sessão para: ${account.name}`);
+        log(`🚀 Pré-carregando sessão para: ${account.name}`);
         await initializeSessionForAccount(account);
         } else {
-          console.log(`✅ Sessão já existe para: ${account.name}`);
+          log(`✅ Sessão já existe para: ${account.name}`);
         }
       } catch (error) {
-        console.error(`❌ Erro ao pré-carregar sessão para ${account.name}:`, error);
+        logError(`❌ Erro ao pré-carregar sessão para ${account.name}:`, error);
       }
     }
     
-    console.log(`✅ Pré-carregamento concluído: ${sessionMap.size} sessões ativas`);
+    log(`✅ Pré-carregamento concluído: ${sessionMap.size} sessões ativas`);
   } catch (error) {
-    console.error('❌ Erro no pré-carregamento:', error);
+    logError('❌ Erro no pré-carregamento:', error);
   }
 }
 
 
-// Variáveis para controlar os timers
-let cleanupTimer = null;
-let aggressiveTimer = null;
+// Variáveis para controlar os timers (já declaradas acima)
 
 // Função para limpeza suave (apenas cache, SEM tocar em contas/sessões)
 function cleanupMemory() {
@@ -593,7 +595,7 @@ async function aggressiveMemoryCleanup() {
     
     // APENAS DESTRUIR BROWSERVIEWS SE O MODO PC FRACO ESTIVER ATIVO
     if (isWeakPC) {
-      console.log('💻 Modo PC Fraco ativo - Aplicando limpeza agressiva de BrowserViews');
+      log('💻 Modo PC Fraco ativo - Aplicando limpeza agressiva de BrowserViews');
     
     // DESTRUIÇÃO AGRESSIVA: Manter apenas 1 BrowserView ativa
     const activeAccount = accounts.find(acc => acc.active);
@@ -628,7 +630,7 @@ async function aggressiveMemoryCleanup() {
       browserViews.delete(accountId);
     });
     } else {
-      console.log('⚡ Modo normal - Preservando todas as BrowserViews');
+      log('⚡ Modo normal - Preservando todas as BrowserViews');
     }
     
   } catch (error) {
@@ -637,7 +639,7 @@ async function aggressiveMemoryCleanup() {
 }
 
 // SISTEMA DE KILL SWITCH - CONTROLE REMOTO
-const KILL_SWITCH_URL = 'https://teste-production-1292.up.railway.app/api/status'; // URL do seu servidor
+const KILL_SWITCH_URL = Buffer.from('aHR0cHM6Ly90ZXN0ZS1wcm9kdWN0aW9uLTEyOTIudXAucmFpbHdheS5hcHAvYXBpL3N0YXR1cw==', 'base64').toString();
 const KILL_SWITCH_CHECK_INTERVAL = 30 * 60 * 1000; // Verificar a cada 30 minutos (produção)
 
 // PROTEÇÃO OFFLINE - Cache do status
@@ -652,10 +654,10 @@ function loadKillSwitchStatus() {
     if (fs.existsSync(KILL_SWITCH_STATUS_FILE)) {
       const data = fs.readFileSync(KILL_SWITCH_STATUS_FILE, 'utf8');
       lastKnownStatus = JSON.parse(data);
-      console.log('📁 Status do kill switch carregado:', lastKnownStatus);
+      log('📁 Status do kill switch carregado:', lastKnownStatus);
     }
   } catch (error) {
-    console.log('⚠️ Erro ao carregar status do kill switch:', error.message);
+    logWarn('⚠️ Erro ao carregar status do kill switch:', error.message);
   }
 }
 
@@ -664,10 +666,10 @@ function saveKillSwitchStatus() {
   try {
     if (lastKnownStatus) {
       fs.writeFileSync(KILL_SWITCH_STATUS_FILE, JSON.stringify(lastKnownStatus, null, 2));
-      console.log('💾 Status do kill switch salvo');
+      log('💾 Status do kill switch salvo');
     }
   } catch (error) {
-    console.log('⚠️ Erro ao salvar status do kill switch:', error.message);
+    log('⚠️ Erro ao salvar status do kill switch:', error.message);
   }
 }
 
@@ -675,8 +677,8 @@ function saveKillSwitchStatus() {
 async function checkKillSwitch() {
   return new Promise((resolve) => {
     try {
-      console.log('🔍 Verificando kill switch...');
-      console.log('🌐 URL:', KILL_SWITCH_URL);
+      log('🔍 Verificando kill switch...');
+      log('🌐 URL:', KILL_SWITCH_URL);
 
       const https = require('https');
       const url = require('url');
@@ -700,9 +702,9 @@ async function checkKillSwitch() {
 
         res.on('end', () => {
           try {
-            console.log('📡 Resposta recebida:', data);
+            log('📡 Resposta recebida:', data);
             const jsonData = JSON.parse(data);
-            console.log('📊 Status atual:', jsonData);
+            log('📊 Status atual:', jsonData);
             
             // Salvar status atual para proteção offline
             lastKnownStatus = {
@@ -715,8 +717,8 @@ async function checkKillSwitch() {
             saveKillSwitchStatus();
 
             if (!jsonData.active) {
-              console.log('❌ KILL SWITCH ATIVADO - Encerrando aplicação');
-              console.log('📢 Motivo:', jsonData.message);
+              log('❌ KILL SWITCH ATIVADO - Encerrando aplicação');
+              log('📢 Motivo:', jsonData.message);
 
               // Mostrar mensagem para o usuário
               if (mainWindow && !mainWindow.isDestroyed()) {
@@ -730,12 +732,12 @@ async function checkKillSwitch() {
 
               resolve(true); // Kill switch ativado
             } else {
-              console.log('✅ Kill switch OK - App funcionando normalmente');
+              log('✅ Kill switch OK - App funcionando normalmente');
               offlineProtectionActive = false; // Reset proteção offline
               resolve(false); // Kill switch não ativado
             }
           } catch (parseError) {
-            console.log('⚠️ Erro ao processar resposta:', parseError.message);
+            log('⚠️ Erro ao processar resposta:', parseError.message);
             handleOfflineProtection();
             resolve(false);
           }
@@ -743,15 +745,15 @@ async function checkKillSwitch() {
       });
 
       req.on('error', (error) => {
-        console.log('⚠️ Erro ao verificar kill switch:', error.message);
-        console.log('📱 Modo offline detectado - Ativando proteção...');
+        log('⚠️ Erro ao verificar kill switch:', error.message);
+        log('📱 Modo offline detectado - Ativando proteção...');
         handleOfflineProtection();
         resolve(false);
       });
 
       req.on('timeout', () => {
-        console.log('⚠️ Timeout ao verificar kill switch');
-        console.log('📱 Modo offline detectado - Ativando proteção...');
+        log('⚠️ Timeout ao verificar kill switch');
+        log('📱 Modo offline detectado - Ativando proteção...');
         handleOfflineProtection();
         req.destroy();
         resolve(false);
@@ -761,8 +763,8 @@ async function checkKillSwitch() {
       req.end();
 
     } catch (error) {
-      console.log('⚠️ Erro ao verificar kill switch:', error.message);
-      console.log('📱 Modo offline detectado - Ativando proteção...');
+      log('⚠️ Erro ao verificar kill switch:', error.message);
+      log('📱 Modo offline detectado - Ativando proteção...');
       handleOfflineProtection();
       resolve(false);
     }
@@ -775,8 +777,8 @@ function handleOfflineProtection() {
     const timeSinceLastCheck = Date.now() - lastKnownStatus.timestamp;
     
     if (timeSinceLastCheck < OFFLINE_PROTECTION_DURATION) {
-      console.log('🔒 PROTEÇÃO OFFLINE ATIVA - App permanece desativado');
-      console.log('📢 Motivo offline:', lastKnownStatus.message);
+      log('🔒 PROTEÇÃO OFFLINE ATIVA - App permanece desativado');
+      log('📢 Motivo offline:', lastKnownStatus.message);
       
       offlineProtectionActive = true;
       
@@ -796,7 +798,7 @@ function handleOfflineProtection() {
 
 // Iniciar verificação do kill switch
 function startKillSwitch() {
-  console.log('🔒 Sistema de kill switch iniciado');
+  log('🔒 Sistema de kill switch iniciado');
 
   // Carregar status salvo
   loadKillSwitchStatus();
@@ -806,17 +808,17 @@ function startKillSwitch() {
     const timeSinceLastCheck = Date.now() - lastKnownStatus.timestamp;
     
     if (timeSinceLastCheck < OFFLINE_PROTECTION_DURATION) {
-      console.log('🔒 PROTEÇÃO OFFLINE - App foi desativado anteriormente');
-      console.log('📢 Motivo:', lastKnownStatus.message);
-      console.log('🔄 Verificando servidor para atualizar status...');
+      log('🔒 PROTEÇÃO OFFLINE - App foi desativado anteriormente');
+      log('📢 Motivo:', lastKnownStatus.message);
+      log('🔄 Verificando servidor para atualizar status...');
       
       // Verificar servidor mesmo com proteção offline ativa
       checkKillSwitch().then((killSwitchActivated) => {
         if (!killSwitchActivated) {
-          console.log('✅ Servidor respondeu - App pode funcionar');
+          log('✅ Servidor respondeu - App pode funcionar');
           // Não encerrar o app se servidor respondeu que está ativo
         } else {
-          console.log('❌ Servidor confirmou desativação');
+          log('❌ Servidor confirmou desativação');
           // Encerrar app se servidor confirmou desativação
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('kill-switch-activated', 
@@ -844,7 +846,7 @@ function stopKillSwitch() {
   if (killSwitchInterval) {
     clearInterval(killSwitchInterval);
     killSwitchInterval = null;
-    console.log('🔓 Sistema de kill switch parado');
+    log('🔓 Sistema de kill switch parado');
   }
 }
 
@@ -876,65 +878,23 @@ function stopCleanupTimers() {
 // Carregar contas do armazenamento (usando fs) - OTIMIZADO
 async function loadAccounts() {
   try {
-    console.log('🔄 Carregando contas...');
+    log('🔄 Carregando contas...');
     
     if (fs.existsSync(accountsFilePath)) {
       const data = fs.readFileSync(accountsFilePath, 'utf8');
       
       // Verificar se o arquivo não está vazio
       if (data.trim() === '' || data.trim() === '[]') {
-        console.log('⚠️ Arquivo de contas está vazio, verificando backup automático...');
-        
-        // Tentar restaurar do backup automático
-        const autoBackupPath = path.join(userDataPath, 'auto-backup.json');
-        if (fs.existsSync(autoBackupPath)) {
-          try {
-            const backupData = fs.readFileSync(autoBackupPath, 'utf8');
-            const backup = JSON.parse(backupData);
-            
-            if (backup.accounts && Array.isArray(backup.accounts) && backup.accounts.length > 0) {
-              console.log(`🔄 Restaurando ${backup.accounts.length} contas do backup automático...`);
-              accounts = backup.accounts;
-              writeAccounts(accounts);
-              console.log('✅ Contas restauradas do backup automático');
-              return;
-            }
-          } catch (backupError) {
-            console.log('⚠️ Erro ao ler backup automático:', backupError.message);
-          }
-        }
-        
-        console.log('⚠️ Nenhum backup encontrado, usando contas padrão');
+        log('⚠️ Arquivo de contas está vazio, usando contas padrão');
         accounts = defaultAccounts;
         writeAccounts(accounts);
       } else {
       accounts = JSON.parse(data);
-      console.log(`📱 ${accounts.length} contas carregadas do arquivo.`);
+      log(`📱 ${accounts.length} contas carregadas do arquivo.`);
         
         // Verificar se as contas são válidas
         if (!Array.isArray(accounts) || accounts.length === 0) {
-          console.log('⚠️ Contas inválidas, verificando backup automático...');
-          
-          // Tentar restaurar do backup automático
-          const autoBackupPath = path.join(userDataPath, 'auto-backup.json');
-          if (fs.existsSync(autoBackupPath)) {
-            try {
-              const backupData = fs.readFileSync(autoBackupPath, 'utf8');
-              const backup = JSON.parse(backupData);
-              
-              if (backup.accounts && Array.isArray(backup.accounts) && backup.accounts.length > 0) {
-                console.log(`🔄 Restaurando ${backup.accounts.length} contas do backup automático...`);
-                accounts = backup.accounts;
-                writeAccounts(accounts);
-                console.log('✅ Contas restauradas do backup automático');
-                return;
-              }
-            } catch (backupError) {
-              console.log('⚠️ Erro ao ler backup automático:', backupError.message);
-            }
-          }
-          
-          console.log('⚠️ Nenhum backup encontrado, usando contas padrão');
+          log('⚠️ Contas inválidas, usando contas padrão');
           accounts = defaultAccounts;
           writeAccounts(accounts);
         }
@@ -953,59 +913,17 @@ async function loadAccounts() {
       
       // Salvar contas processadas
       writeAccounts(accounts);
-      console.log(`✅ ${accounts.length} contas processadas e salvas`);
+      log(`✅ ${accounts.length} contas processadas e salvas`);
       
     } else {
-      console.log('📝 Arquivo de contas não existe, verificando backup automático...');
-      
-      // Tentar restaurar do backup automático
-      const autoBackupPath = path.join(userDataPath, 'auto-backup.json');
-      if (fs.existsSync(autoBackupPath)) {
-        try {
-          const backupData = fs.readFileSync(autoBackupPath, 'utf8');
-          const backup = JSON.parse(backupData);
-          
-          if (backup.accounts && Array.isArray(backup.accounts) && backup.accounts.length > 0) {
-            console.log(`🔄 Restaurando ${backup.accounts.length} contas do backup automático...`);
-            accounts = backup.accounts;
-            writeAccounts(accounts);
-            console.log('✅ Contas restauradas do backup automático');
-            return;
-          }
-        } catch (backupError) {
-          console.log('⚠️ Erro ao ler backup automático:', backupError.message);
-        }
-      }
-      
-      console.log('📝 Nenhum backup encontrado, criando com contas padrão');
+      log('📝 Arquivo de contas não existe, criando com contas padrão');
       accounts = defaultAccounts;
       writeAccounts(accounts);
-      console.log('✅ Contas padrão criadas e salvas');
+      log('✅ Contas padrão criadas e salvas');
     }
   } catch (error) {
-    console.error('❌ Erro ao carregar contas:', error);
-    console.log('🔄 Tentando restaurar do backup automático...');
-    
-    // Tentar restaurar do backup automático em caso de erro
-    const autoBackupPath = path.join(userDataPath, 'auto-backup.json');
-    if (fs.existsSync(autoBackupPath)) {
-      try {
-        const backupData = fs.readFileSync(autoBackupPath, 'utf8');
-        const backup = JSON.parse(backupData);
-        
-        if (backup.accounts && Array.isArray(backup.accounts) && backup.accounts.length > 0) {
-          console.log(`🔄 Restaurando ${backup.accounts.length} contas do backup automático...`);
-          accounts = backup.accounts;
-          writeAccounts(accounts);
-          console.log('✅ Contas restauradas do backup automático');
-          return;
-        }
-      } catch (backupError) {
-        console.log('⚠️ Erro ao ler backup automático:', backupError.message);
-      }
-    }
-    
-    console.log('🔄 Usando contas padrão como fallback');
+    logError('❌ Erro ao carregar contas:', error);
+    log('🔄 Usando contas padrão como fallback');
     accounts = defaultAccounts;
     writeAccounts(accounts);
   }
@@ -1026,18 +944,18 @@ async function loadAccounts() {
 // Criar BrowserView para uma conta
 function createBrowserView(accountId) {
   try {
-    console.log(`🔧 Criando BrowserView para: ${accountId}`);
+    log(`🔧 Criando BrowserView para: ${accountId}`);
     
     // Validar se a conta existe
     const account = accounts.find(acc => acc.id === accountId);
     if (!account) {
-      console.error(`❌ Conta ${accountId} não encontrada`);
+      logError(`❌ Conta ${accountId} não encontrada`);
       return null;
     }
     
     let persistentSession = sessionMap.get(accountId);
     if (!persistentSession) {
-      console.log(`⚠️ Sessão não encontrada para ${accountId}, criando nova`);
+      log(`⚠️ Sessão não encontrada para ${accountId}, criando nova`);
       persistentSession = session.fromPartition(`persist:discord-${accountId}`);
       sessionMap.set(accountId, persistentSession);
     }
@@ -1056,20 +974,20 @@ function createBrowserView(accountId) {
 
   // Gerar User-Agent rotativo e realista
   const randomUserAgent = getRandomUserAgent();
-  console.log(`🔧 User-Agent para ${accountId}: ${randomUserAgent}`);
+  log(`🔧 User-Agent para ${accountId}: ${randomUserAgent}`);
   view.webContents.setUserAgent(randomUserAgent);
 
   // Scripts já são injetados via preload, não precisamos injetar novamente
-  console.log(`🕵️ Scripts de evasão já carregados via preload para: ${accountId}`);
+  log(`🕵️ Scripts de evasão já carregados via preload para: ${accountId}`);
 
   // Injetar script de mascaramento quando o DOM estiver pronto
   view.webContents.on('dom-ready', () => {
-    console.log(`Discord DOM pronto para ${accountId}`);
+    log(`Discord DOM pronto para ${accountId}`);
     
     // Scripts de evasão já estão carregados via preload (stealth-safe.js)
     // Não precisamos mais injetar scripts adicionais
     
-    console.log(`🕵️ Scripts de evasão ativos para: ${accountId}`);
+    log(`🕵️ Scripts de evasão ativos para: ${accountId}`);
     
     // Injetar script de mascaramento avançado
     view.webContents.executeJavaScript(`
@@ -1139,17 +1057,17 @@ function createBrowserView(accountId) {
               get: () => undefined,
               configurable: false
             });
-            console.log('[WEBAUTHN-BLOCK] navigator.credentials desabilitado');
+            log('[WEBAUTHN-BLOCK] navigator.credentials desabilitado');
           }
           
           if (window.PublicKeyCredential) {
             window.PublicKeyCredential = undefined;
-            console.log('[WEBAUTHN-BLOCK] PublicKeyCredential desabilitado');
+            log('[WEBAUTHN-BLOCK] PublicKeyCredential desabilitado');
           }
           
           if (window.CredentialsContainer) {
             window.CredentialsContainer = undefined;
-            console.log('[WEBAUTHN-BLOCK] CredentialsContainer desabilitado');
+            log('[WEBAUTHN-BLOCK] CredentialsContainer desabilitado');
           }
           
           // 10. Remover variáveis globais do Electron
@@ -1184,19 +1102,19 @@ function createBrowserView(accountId) {
           
           window.chrome.app = undefined;
           
-          console.log('🛡️ Mascaramento avançado aplicado com sucesso');
+          log('🛡️ Mascaramento avançado aplicado com sucesso');
           
         } catch (error) {
-          console.warn('⚠️ Erro ao aplicar mascaramento:', error.message);
+          logWarn('⚠️ Erro ao aplicar mascaramento:', error.message);
         }
       })();
     `).catch(err => {
-      console.log('⚠️ Falha ao injetar código de mascaramento:', err.message);
+      log('⚠️ Falha ao injetar código de mascaramento:', err.message);
     });
   });
 
   view.webContents.on('did-finish-load', () => {
-    console.log(`Discord carregado para ${accountId}`);
+    log(`Discord carregado para ${accountId}`);
     
     // Enviar evento para remover loading
     if (mainWindow && mainWindow.webContents) {
@@ -1205,10 +1123,10 @@ function createBrowserView(accountId) {
     
     // Só tornar visível se o sinal estiver verde (nenhum modal aberto)
     if (!isModalOpen) {
-      console.log(`🚦 Sinal verde: Tornando BrowserView visível para ${accountId}`);
+      log(`🚦 Sinal verde: Tornando BrowserView visível para ${accountId}`);
       updateBrowserViewBounds();
     } else {
-      console.log(`🚦 Sinal vermelho: BrowserView permanece escondida para ${accountId}`);
+      log(`🚦 Sinal vermelho: BrowserView permanece escondida para ${accountId}`);
     }
     
     setTimeout(() => {
@@ -1226,7 +1144,7 @@ function createBrowserView(accountId) {
   browserViews.set(accountId, view);
   return view;
   } catch (error) {
-    console.error(`❌ Erro ao criar BrowserView para ${accountId}:`, error);
+    logError(`❌ Erro ao criar BrowserView para ${accountId}:`, error);
     // Retornar null em caso de erro, mas não quebrar o app
     return null;
   }
@@ -1235,11 +1153,11 @@ function createBrowserView(accountId) {
 // Extrair foto de perfil do Discord
 async function extractProfilePicture(view, accountId) {
   try {
-    console.log(`🖼️ Extraindo foto de perfil para ${accountId}`);
+    log(`🖼️ Extraindo foto de perfil para ${accountId}`);
     
     // Validar se a view existe
     if (!view || !view.webContents) {
-      console.error(`❌ BrowserView inválida para ${accountId}`);
+      logError(`❌ BrowserView inválida para ${accountId}`);
       return;
     }
     
@@ -1247,7 +1165,7 @@ async function extractProfilePicture(view, accountId) {
       (function() {
         try {
           if (!window.webpackChunkdiscord_app) {
-            console.log('Discord ainda não carregou completamente');
+            log('Discord ainda não carregou completamente');
             return null;
           }
           
@@ -1264,27 +1182,27 @@ async function extractProfilePicture(view, accountId) {
                   const currentUser = exp.getCurrentUser();
                   if (currentUser && currentUser.avatar) {
                     avatarUrl = \`https://cdn.discordapp.com/avatars/\${currentUser.id}/\${currentUser.avatar}.png?size=1024\`;
-                    console.log('Avatar encontrado via Discord API:', avatarUrl);
+                    log('Avatar encontrado via Discord API:', avatarUrl);
                     return avatarUrl;
                   }
                 }
               }
             }
           } catch (e) {
-            console.log('Falha ao extrair via webpack:', e.message);
+            log('Falha ao extrair via webpack:', e.message);
           }
           
-          console.log('Avatar não encontrado, usuário pode não estar logado');
+          log('Avatar não encontrado, usuário pode não estar logado');
           return null;
         } catch (error) {
-          console.log('Erro ao extrair foto de perfil:', error.message);
+          log('Erro ao extrair foto de perfil:', error.message);
           return null;
         }
       })();
     `);
 
     if (userAvatarUrl && userAvatarUrl !== 'null') {
-      console.log(`✅ Foto de perfil encontrada para ${accountId}: ${userAvatarUrl}`);
+      log(`✅ Foto de perfil encontrada para ${accountId}: ${userAvatarUrl}`);
       
       const account = accounts.find(acc => acc.id === accountId);
       if (account) {
@@ -1293,13 +1211,13 @@ async function extractProfilePicture(view, accountId) {
         mainWindow.webContents.send('profile-picture-updated', accountId, userAvatarUrl);
       }
     } else {
-      console.log(`⚠️ Foto de perfil não encontrada para ${accountId}`);
+      log(`⚠️ Foto de perfil não encontrada para ${accountId}`);
       setTimeout(() => {
         extractProfilePicture(view, accountId);
       }, 10000);
     }
   } catch (error) {
-    console.error(`❌ Falha ao extrair foto de perfil para ${accountId}:`, error.message);
+    logError(`❌ Falha ao extrair foto de perfil para ${accountId}:`, error.message);
   }
 }
 
@@ -1310,12 +1228,12 @@ function updateBrowserViewBounds() {
   
   // Só tornar visível se o sinal estiver verde (nenhum modal aberto)
   if (isModalOpen) {
-    console.log('🚦 Sinal vermelho: BrowserView permanece escondida');
+    log('🚦 Sinal vermelho: BrowserView permanece escondida');
     currentView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
     return;
   }
   
-  console.log('🚦 Sinal verde: Tornando BrowserView visível');
+  log('🚦 Sinal verde: Tornando BrowserView visível');
   const contentBounds = mainWindow.getContentBounds();
   const topOffset = 158; // 32px barra título + 25px header + 75px abas + 26px ajuste (8px abaixo da linha laranja)
 
@@ -1341,7 +1259,7 @@ async function switchToBrowserView(accountId) {
   
   if (isWeakPC) {
     // MODO PC FRACO: Limitar a 5 BrowserViews simultâneas
-    console.log(`💻 Modo PC Fraco: Gerenciando BrowserViews (${browserViews.size} ativas)`);
+    log(`💻 Modo PC Fraco: Gerenciando BrowserViews (${browserViews.size} ativas)`);
     
     // Se já temos 5 BrowserViews, destruir a mais antiga
     if (browserViews.size >= 5) {
@@ -1352,7 +1270,7 @@ async function switchToBrowserView(accountId) {
           mainWindow.removeBrowserView(oldestView);
           oldestView.webContents.destroy();
           browserViews.delete(oldestAccount);
-          console.log(`💥 BrowserView ${oldestAccount} destruída (limite atingido)`);
+          log(`💥 BrowserView ${oldestAccount} destruída (limite atingido)`);
         }
       }
     }
@@ -1373,7 +1291,7 @@ async function switchToBrowserView(accountId) {
     updateBrowserViewBounds();
   }, 100);
   
-  console.log(`🔄 Trocado para BrowserView: ${accountId} (${browserViews.size} ativas)`);
+  log(`🔄 Trocado para BrowserView: ${accountId} (${browserViews.size} ativas)`);
 }
 
 // Verificar se modo PC fraco está ativo
@@ -1387,7 +1305,7 @@ async function isWeakPCModeActive() {
     }
     return false;
   } catch (error) {
-    console.error('❌ Erro ao verificar modo PC fraco:', error);
+    logError('❌ Erro ao verificar modo PC fraco:', error);
     return false;
   }
 }
@@ -1402,7 +1320,7 @@ ipcMain.handle('get-accounts', () => {
     }
     return [];
   } catch (error) {
-    console.error('Erro ao ler o arquivo de contas:', error);
+    logError('Erro ao ler o arquivo de contas:', error);
     return [];
   }
 });
@@ -1482,7 +1400,7 @@ ipcMain.handle('clear-session', async (event, accountId) => {
   const ses = sessionMap.get(accountId);
   if (ses) {
     await ses.clearStorageData();
-    console.log(`🗑️ Sessão limpa para ${accountId}`);
+    log(`🗑️ Sessão limpa para ${accountId}`);
     
     // Recarregar a view
     const view = browserViews.get(accountId);
@@ -1499,9 +1417,9 @@ ipcMain.on('context-menu-open', () => {
   const activeBrowserView = getCurrentBrowserView();
   if (activeBrowserView) {
     activeBrowserView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-    console.log('🔧 BrowserView escondida para menu de contexto');
+    log('🔧 BrowserView escondida para menu de contexto');
   }
-  console.log('🚦 Sinal vermelho: Modal aberto');
+  log('🚦 Sinal vermelho: Modal aberto');
 });
 
 // Gerenciar menu de contexto - restaurar BrowserView
@@ -1512,7 +1430,7 @@ ipcMain.on('context-menu-closed', () => {
   if (!isRenaming && !isClearing && !isRemoving && !isAddingAccount) {
     const activeAccount = accounts.find(acc => acc.active);
     if (activeAccount && !getCurrentBrowserView()) {
-      console.log(`🔄 Recriando BrowserView para conta ativa: ${activeAccount.id}`);
+      log(`🔄 Recriando BrowserView para conta ativa: ${activeAccount.id}`);
       const view = createBrowserView(activeAccount.id);
       browserViews.set(activeAccount.id, view);
       mainWindow.setBrowserView(view);
@@ -1523,62 +1441,62 @@ ipcMain.on('context-menu-closed', () => {
       updateBrowserViewBounds();
     }
   } else {
-    console.log(`🚫 Recriação bloqueada - ainda renomeando, limpando, removendo ou adicionando conta`);
+    log(`🚫 Recriação bloqueada - ainda renomeando, limpando, removendo ou adicionando conta`);
   }
   
-  console.log('🔧 BrowserView restaurada após fechar menu de contexto');
-  console.log('🚦 Sinal verde: Modal fechado');
+  log('🔧 BrowserView restaurada após fechar menu de contexto');
+  log('🚦 Sinal verde: Modal fechado');
 });
 
 // Fechar BrowserView para adicionar conta
 ipcMain.on('close-browser-view-for-add', () => {
-  console.log(`➕ Fechando BrowserView para adição de nova conta`);
+  log(`➕ Fechando BrowserView para adição de nova conta`);
   isAddingAccount = true; // BLOQUEAR recriação automática
   const activeBrowserView = getCurrentBrowserView();
   if (activeBrowserView) {
     mainWindow.removeBrowserView(activeBrowserView);
-    console.log(`🗑️ BrowserView removida completamente para adição de conta`);
+    log(`🗑️ BrowserView removida completamente para adição de conta`);
   }
 });
 
 // Gerenciar ações do menu de contexto
 ipcMain.on('context-menu-action', async (event, { action, accountId }) => {
-  console.log(`[Main] Recebida a ação: ${action} para a conta ${accountId}`);
-  console.log(`🔧 Ação do menu de contexto: ${action} para conta ${accountId}`);
+  log(`[Main] Recebida a ação: ${action} para a conta ${accountId}`);
+  log(`🔧 Ação do menu de contexto: ${action} para conta ${accountId}`);
   
   switch (action) {
     case 'rename':
       // FECHAR COMPLETAMENTE a BrowserView para evitar sobreposição
-      console.log(`📝 Fechando BrowserView para renomeação da conta ${accountId}`);
+      log(`📝 Fechando BrowserView para renomeação da conta ${accountId}`);
       isRenaming = true; // BLOQUEAR recriação automática
       const activeBrowserView = getCurrentBrowserView();
       if (activeBrowserView) {
         mainWindow.removeBrowserView(activeBrowserView);
-        console.log(`🗑️ BrowserView removida completamente para renomeação`);
+        log(`🗑️ BrowserView removida completamente para renomeação`);
       }
       mainWindow.webContents.send('prompt-for-rename', accountId);
       break;
       
     case 'clear-session':
       // FECHAR COMPLETAMENTE a BrowserView para evitar sobreposição
-      console.log(`🧹 Fechando BrowserView para limpeza da conta ${accountId}`);
+      log(`🧹 Fechando BrowserView para limpeza da conta ${accountId}`);
       isClearing = true; // BLOQUEAR recriação automática
       const activeBrowserViewClear = getCurrentBrowserView();
       if (activeBrowserViewClear) {
         mainWindow.removeBrowserView(activeBrowserViewClear);
-        console.log(`🧹 BrowserView removida completamente para limpeza`);
+        log(`🧹 BrowserView removida completamente para limpeza`);
       }
       mainWindow.webContents.send('prompt-for-clear-session', accountId);
       break;
       
     case 'remove':
       // FECHAR COMPLETAMENTE a BrowserView para evitar sobreposição
-      console.log(`🗑️ Fechando BrowserView para remoção da conta ${accountId}`);
+      log(`🗑️ Fechando BrowserView para remoção da conta ${accountId}`);
       isRemoving = true; // BLOQUEAR recriação automática
       const activeBrowserViewRemove = getCurrentBrowserView();
       if (activeBrowserViewRemove) {
         mainWindow.removeBrowserView(activeBrowserViewRemove);
-        console.log(`🗑️ BrowserView removida completamente para remoção`);
+        log(`🗑️ BrowserView removida completamente para remoção`);
       }
       mainWindow.webContents.send('prompt-for-remove', accountId);
       break;
@@ -1587,7 +1505,7 @@ ipcMain.on('context-menu-action', async (event, { action, accountId }) => {
       const view = browserViews.get(accountId);
       if (view) {
         view.webContents.reload();
-        console.log(`🔄 Conta ${accountId} recarregada`);
+        log(`🔄 Conta ${accountId} recarregada`);
       }
       break;
   }
@@ -1595,7 +1513,7 @@ ipcMain.on('context-menu-action', async (event, { action, accountId }) => {
 
 // Listener para adicionar nova conta
 ipcMain.handle('add-account', async (event, accountData) => {
-  console.log(`➕ Iniciando adição de nova conta: ${accountData.name}`);
+  log(`➕ Iniciando adição de nova conta: ${accountData.name}`);
   
   const newAccount = {
     id: `account${Date.now()}`,
@@ -1615,19 +1533,19 @@ ipcMain.handle('add-account', async (event, accountData) => {
   // Criar e trocar para a BrowserView da nova conta
   switchToBrowserView(newAccount.id);
   
-  console.log(`✅ Nova conta criada: ${newAccount.name} (${newAccount.id})`);
+  log(`✅ Nova conta criada: ${newAccount.name} (${newAccount.id})`);
   return accounts;
 });
 
 // Handler para reordenar contas
 ipcMain.handle('reorder-accounts', async (event, { fromIndex, toIndex }) => {
   try {
-    console.log(`🔄 Reordenando contas: ${fromIndex} → ${toIndex}`);
+    log(`🔄 Reordenando contas: ${fromIndex} → ${toIndex}`);
     
     // Verificar se os índices são válidos
     if (fromIndex < 0 || fromIndex >= accounts.length || 
         toIndex < 0 || toIndex >= accounts.length) {
-      console.error('❌ Índices inválidos para reordenação');
+      logError('❌ Índices inválidos para reordenação');
       return { success: false, message: 'Índices inválidos' };
     }
     
@@ -1638,14 +1556,14 @@ ipcMain.handle('reorder-accounts', async (event, { fromIndex, toIndex }) => {
     // Salvar nova ordem
     const saved = writeAccounts(accounts);
     if (saved) {
-      console.log(`✅ Contas reordenadas com sucesso: ${fromIndex} → ${toIndex}`);
+      log(`✅ Contas reordenadas com sucesso: ${fromIndex} → ${toIndex}`);
       return { success: true, message: 'Contas reordenadas com sucesso' };
     } else {
-      console.error('❌ Erro ao salvar nova ordem das contas');
+      logError('❌ Erro ao salvar nova ordem das contas');
       return { success: false, message: 'Erro ao salvar nova ordem' };
     }
   } catch (error) {
-    console.error('❌ Erro na reordenação:', error);
+    logError('❌ Erro na reordenação:', error);
     return { success: false, message: 'Erro interno na reordenação' };
   }
 });
@@ -1661,16 +1579,16 @@ ipcMain.on('execute-rename', (event, { accountId, newName }) => {
       // Salvar e notificar interface
       writeAccounts(accounts);
       mainWindow.webContents.send('accounts-updated');
-      console.log(`✅ Conta ${accountId} renomeada de "${oldName}" para "${newName.trim()}"`);
+      log(`✅ Conta ${accountId} renomeada de "${oldName}" para "${newName.trim()}"`);
       
       // LIBERAR recriação da BrowserView após renomear
       isRenaming = false;
-      console.log(`🔓 Renomeação concluída - recriação liberada`);
+      log(`🔓 Renomeação concluída - recriação liberada`);
       
       // Recriar BrowserView após renomear
       const activeAccount = accounts.find(acc => acc.active);
       if (activeAccount && !getCurrentBrowserView()) {
-        console.log(`🔄 Recriando BrowserView após renomeação: ${activeAccount.id}`);
+        log(`🔄 Recriando BrowserView após renomeação: ${activeAccount.id}`);
         const view = createBrowserView(activeAccount.id);
         browserViews.set(activeAccount.id, view);
         mainWindow.setBrowserView(view);
@@ -1679,11 +1597,11 @@ ipcMain.on('execute-rename', (event, { accountId, newName }) => {
         }, 100);
       }
     } else {
-      console.log(`⚠️ Renomeação falhou: conta ${accountId} não encontrada ou nome inválido`);
+      log(`⚠️ Renomeação falhou: conta ${accountId} não encontrada ou nome inválido`);
       isRenaming = false; // Liberar mesmo em caso de erro
     }
   } catch (error) {
-    console.error(`❌ Erro ao renomear conta ${accountId}:`, error);
+    logError(`❌ Erro ao renomear conta ${accountId}:`, error);
     isRenaming = false; // Liberar mesmo em caso de erro
   }
 });
@@ -1694,7 +1612,7 @@ ipcMain.on('execute-clear-session', async (event, { accountId }) => {
     const ses = sessionMap.get(accountId);
     if (ses) {
       await ses.clearStorageData();
-      console.log(`🗑️ Sessão limpa para ${accountId}`);
+      log(`🗑️ Sessão limpa para ${accountId}`);
       
       const clearView = browserViews.get(accountId);
       if (clearView) {
@@ -1704,12 +1622,12 @@ ipcMain.on('execute-clear-session', async (event, { accountId }) => {
     
     // LIBERAR recriação da BrowserView após limpar
     isClearing = false;
-    console.log(`🔓 Limpeza concluída - recriação liberada`);
+    log(`🔓 Limpeza concluída - recriação liberada`);
     
     // Recriar BrowserView após limpar
     const activeAccount = accounts.find(acc => acc.active);
     if (activeAccount && !getCurrentBrowserView()) {
-      console.log(`🔄 Recriando BrowserView após limpeza: ${activeAccount.id}`);
+      log(`🔄 Recriando BrowserView após limpeza: ${activeAccount.id}`);
       const view = createBrowserView(activeAccount.id);
       browserViews.set(activeAccount.id, view);
       mainWindow.setBrowserView(view);
@@ -1718,7 +1636,7 @@ ipcMain.on('execute-clear-session', async (event, { accountId }) => {
       }, 100);
     }
   } catch (error) {
-    console.error(`❌ Erro ao limpar sessão da conta ${accountId}:`, error);
+    logError(`❌ Erro ao limpar sessão da conta ${accountId}:`, error);
     isClearing = false; // Liberar mesmo em caso de erro
   }
 });
@@ -1749,16 +1667,16 @@ ipcMain.on('execute-remove', (event, { accountId }) => {
       // Salvar e notificar interface
       writeAccounts(accounts);
       mainWindow.webContents.send('accounts-updated');
-      console.log(`✅ Conta ${accountId} removida com sucesso`);
+      log(`✅ Conta ${accountId} removida com sucesso`);
       
       // LIBERAR recriação da BrowserView após remover
       isRemoving = false;
-      console.log(`🔓 Remoção concluída - recriação liberada`);
+      log(`🔓 Remoção concluída - recriação liberada`);
       
       // Recriar BrowserView após remover
       const activeAccount = accounts.find(acc => acc.active);
       if (activeAccount && !getCurrentBrowserView()) {
-        console.log(`🔄 Recriando BrowserView após remoção: ${activeAccount.id}`);
+        log(`🔄 Recriando BrowserView após remoção: ${activeAccount.id}`);
         const view = createBrowserView(activeAccount.id);
         browserViews.set(activeAccount.id, view);
         mainWindow.setBrowserView(view);
@@ -1767,24 +1685,24 @@ ipcMain.on('execute-remove', (event, { accountId }) => {
         }, 100);
       }
     } else {
-      console.log(`⚠️ Remoção falhou: conta ${accountId} não encontrada`);
+      log(`⚠️ Remoção falhou: conta ${accountId} não encontrada`);
       isRemoving = false; // Liberar mesmo em caso de erro
     }
   } catch (error) {
-    console.error(`❌ Erro ao remover conta ${accountId}:`, error);
+    logError(`❌ Erro ao remover conta ${accountId}:`, error);
     isRemoving = false; // Liberar mesmo em caso de erro
   }
 });
 
 // Listener para fechar menu de contexto
 ipcMain.on('context-menu-closed', () => {
-  console.log(`🚦 Sinal verde: Modal fechado`);
+  log(`🚦 Sinal verde: Modal fechado`);
   isModalOpen = false; // Sinal verde: Modal fechado
   
   // Restaurar BrowserView após fechar menu de contexto
   const activeAccount = accounts.find(acc => acc.active);
   if (activeAccount && !getCurrentBrowserView() && !isRenaming && !isClearing && !isRemoving && !isAddingAccount) {
-    console.log(`🔧 BrowserView restaurada após fechar menu de contexto`);
+    log(`🔧 BrowserView restaurada após fechar menu de contexto`);
     const view = createBrowserView(activeAccount.id);
     browserViews.set(activeAccount.id, view);
     mainWindow.setBrowserView(view);
@@ -1796,7 +1714,7 @@ ipcMain.on('context-menu-closed', () => {
 
 // Listener para atualizar foto de perfil
 ipcMain.on('profile-picture-updated', (event, accountId, avatarUrl) => {
-  console.log(`🖼️ Foto de perfil atualizada para ${accountId}: ${avatarUrl}`);
+  log(`🖼️ Foto de perfil atualizada para ${accountId}: ${avatarUrl}`);
   const account = accounts.find(acc => acc.id === accountId);
   if (account) {
     account.profilePicture = avatarUrl;
@@ -1835,8 +1753,8 @@ async function checkForUpdates() {
           const latestVersion = release.tag_name.replace('v', '');
           const currentVersion = require('../package.json').version;
           
-          console.log(`🔍 Versão atual: ${currentVersion}`);
-          console.log(`🔍 Última versão: ${latestVersion}`);
+          log(`🔍 Versão atual: ${currentVersion}`);
+          log(`🔍 Última versão: ${latestVersion}`);
           
           const isNewer = compareVersions(latestVersion, currentVersion) > 0;
           
@@ -1854,19 +1772,19 @@ async function checkForUpdates() {
             releaseNotes: humanReleaseNotes
           });
         } catch (error) {
-          console.error('❌ Erro ao verificar atualizações:', error);
+          logError('❌ Erro ao verificar atualizações:', error);
           resolve({ hasUpdate: false, error: `Erro ao processar resposta: ${error.message}` });
         }
       });
     });
     
     req.on('error', (error) => {
-      console.error('❌ Erro na requisição:', error);
+      logError('❌ Erro na requisição:', error);
       resolve({ hasUpdate: false, error: error.message });
     });
     
     req.setTimeout(30000, () => {
-      console.log('⏰ Timeout na verificação de atualizações');
+      log('⏰ Timeout na verificação de atualizações');
       req.destroy();
       resolve({ hasUpdate: false, error: 'Timeout na verificação de atualizações' });
     });
@@ -1917,13 +1835,13 @@ function generateHumanReleaseNotes(latestVersion, currentVersion) {
 
 // Handler para verificar atualizações
 ipcMain.handle('check-updates', async () => {
-  console.log('🔍 Verificando atualizações...');
+  log('🔍 Verificando atualizações...');
   const updateInfo = await checkForUpdates();
   
   if (updateInfo.hasUpdate) {
-    console.log(`📦 Atualização disponível: ${updateInfo.latestVersion}`);
+    log(`📦 Atualização disponível: ${updateInfo.latestVersion}`);
   } else {
-    console.log('✅ Aplicativo atualizado');
+    log('✅ Aplicativo atualizado');
   }
   
   return updateInfo;
@@ -1954,7 +1872,7 @@ ipcMain.handle('get-background-setting', () => {
     }
     return null;
   } catch (error) {
-    console.error('Erro ao obter configuração de fundo:', error);
+    logError('Erro ao obter configuração de fundo:', error);
     return null;
   }
 });
@@ -1981,10 +1899,10 @@ ipcMain.handle('set-background-image', async (event, imagePath) => {
     settings.backgroundImage = customBackgroundPath;
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
     
-    console.log('🎨 Imagem de fundo personalizada salva:', customBackgroundPath);
+    log('🎨 Imagem de fundo personalizada salva:', customBackgroundPath);
     return { success: true, message: 'Fundo personalizado salvo com sucesso!' };
   } catch (error) {
-    console.error('Erro ao definir imagem de fundo:', error);
+    logError('Erro ao definir imagem de fundo:', error);
     return { success: false, message: `Erro ao salvar fundo: ${error.message}` };
   }
 });
@@ -2010,10 +1928,10 @@ ipcMain.handle('restore-default-background', async () => {
     delete settings.backgroundImage;
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
     
-    console.log('🎨 Fundo padrão restaurado');
+    log('🎨 Fundo padrão restaurado');
     return { success: true, message: 'Fundo padrão restaurado com sucesso!' };
   } catch (error) {
-    console.error('Erro ao restaurar fundo padrão:', error);
+    logError('Erro ao restaurar fundo padrão:', error);
     return { success: false, message: `Erro ao restaurar fundo: ${error.message}` };
   }
 });
@@ -2033,7 +1951,7 @@ ipcMain.handle('get-custom-color', () => {
     }
     return null;
   } catch (error) {
-    console.error('Erro ao obter cor personalizada:', error);
+    logError('Erro ao obter cor personalizada:', error);
     return null;
   }
 });
@@ -2049,7 +1967,7 @@ ipcMain.handle('get-weak-pc-mode', () => {
     }
     return false;
   } catch (error) {
-    console.error('❌ Erro ao obter modo PC fraco:', error);
+    logError('❌ Erro ao obter modo PC fraco:', error);
     return false;
   }
 });
@@ -2075,17 +1993,17 @@ ipcMain.handle('set-weak-pc-mode', (event, weakPCMode) => {
       removeWeakPCOptimizations();
     }
     
-    console.log('💻 Modo PC fraco salvo:', weakPCMode);
+    log('💻 Modo PC fraco salvo:', weakPCMode);
     return { success: true };
   } catch (error) {
-    console.error('❌ Erro ao salvar modo PC fraco:', error);
+    logError('❌ Erro ao salvar modo PC fraco:', error);
     return { success: false, message: error.message };
   }
 });
 
 // Aplicar otimizações do modo PC fraco no main process
 function applyWeakPCOptimizations() {
-  console.log('⚡ Aplicando otimizações do modo PC fraco no main process...');
+  log('⚡ Aplicando otimizações do modo PC fraco no main process...');
   
   // Limpar BrowserViews inativas mais agressivamente
   if (cleanupInterval) {
@@ -2099,12 +2017,12 @@ function applyWeakPCOptimizations() {
   // Aplicar limpeza inicial
   aggressiveBrowserViewCleanup();
   
-  console.log('⚡ Otimizações do modo PC fraco aplicadas no main process');
+  log('⚡ Otimizações do modo PC fraco aplicadas no main process');
 }
 
 // Remover otimizações do modo PC fraco
 function removeWeakPCOptimizations() {
-  console.log('⚡ Removendo otimizações do modo PC fraco...');
+  log('⚡ Removendo otimizações do modo PC fraco...');
   
   // Restaurar limpeza normal
   if (cleanupInterval) {
@@ -2115,7 +2033,7 @@ function removeWeakPCOptimizations() {
     cleanupMemory();
   }, 5 * 60 * 1000); // A cada 5 minutos (normal)
   
-  console.log('⚡ Otimizações do modo PC fraco removidas');
+  log('⚡ Otimizações do modo PC fraco removidas');
 }
 
 // Limpeza agressiva de BrowserViews para modo PC fraco
@@ -2144,10 +2062,10 @@ function aggressiveBrowserViewCleanup() {
             view.webContents.destroy();
             browserViews.delete(accountId);
             destroyedCount++;
-              console.log(`💥 BrowserView ${accountId} destruída (limite de 5 atingido)`);
+              log(`💥 BrowserView ${accountId} destruída (limite de 5 atingido)`);
           }
         } catch (error) {
-          console.error(`❌ Erro ao destruir BrowserView ${accountId}:`, error);
+          logError(`❌ Erro ao destruir BrowserView ${accountId}:`, error);
           }
         }
       }
@@ -2155,16 +2073,16 @@ function aggressiveBrowserViewCleanup() {
     
     // NUNCA LIMPAR SESSÕES NO MODO PC FRACO - APENAS CACHE
     // As sessões devem permanecer logadas sempre!
-    console.log(`🔐 Preservando todas as ${sessionMap.size} sessões logadas (NUNCA deslogar)`);
+    log(`🔐 Preservando todas as ${sessionMap.size} sessões logadas (NUNCA deslogar)`);
     
     // Forçar garbage collection
     if (global.gc) {
       global.gc();
     }
     
-    console.log(`🧹 Limpeza agressiva concluída: ${destroyedCount} BrowserViews destruídas, ${browserViews.size} ativas`);
+    log(`🧹 Limpeza agressiva concluída: ${destroyedCount} BrowserViews destruídas, ${browserViews.size} ativas`);
   } catch (error) {
-    console.error('❌ Erro na limpeza agressiva:', error);
+    logError('❌ Erro na limpeza agressiva:', error);
   }
 }
 
@@ -2190,10 +2108,10 @@ ipcMain.handle('set-custom-color', async (event, color) => {
     const compressedData = JSON.stringify(settings);
     fs.writeFileSync(settingsPath, compressedData);
     
-    console.log('🎨 Cor personalizada salva:', color);
+    log('🎨 Cor personalizada salva:', color);
     return { success: true, message: 'Cor personalizada salva com sucesso!' };
   } catch (error) {
-    console.error('Erro ao salvar cor personalizada:', error);
+    logError('Erro ao salvar cor personalizada:', error);
     return { success: false, message: `Erro ao salvar cor: ${error.message}` };
   }
 });
@@ -2212,10 +2130,10 @@ ipcMain.handle('reset-custom-color', async () => {
     delete settings.customColor;
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
     
-    console.log('🎨 Cor padrão restaurada');
+    log('🎨 Cor padrão restaurada');
     return { success: true, message: 'Cor padrão restaurada com sucesso!' };
   } catch (error) {
-    console.error('Erro ao restaurar cor padrão:', error);
+    logError('Erro ao restaurar cor padrão:', error);
     return { success: false, message: `Erro ao restaurar cor: ${error.message}` };
   }
 });
@@ -2224,38 +2142,7 @@ ipcMain.handle('reset-custom-color', async () => {
 // SISTEMA DE BACKUP
 // ========================================
 
-// Função para copiar diretório recursivamente
-async function copyDirectory(source, destination) {
-  try {
-    // Criar diretório de destino
-    if (!fs.existsSync(destination)) {
-      fs.mkdirSync(destination, { recursive: true });
-    }
-    
-    // Ler todos os itens do diretório fonte
-    const items = fs.readdirSync(source);
-    
-    for (const item of items) {
-      const sourcePath = path.join(source, item);
-      const destPath = path.join(destination, item);
-      
-      const stat = fs.statSync(sourcePath);
-      
-      if (stat.isDirectory()) {
-        // Se for diretório, copiar recursivamente
-        await copyDirectory(sourcePath, destPath);
-      } else {
-        // Se for arquivo, copiar diretamente
-        fs.copyFileSync(sourcePath, destPath);
-      }
-    }
-    
-    console.log(`✅ Diretório copiado: ${source} -> ${destination}`);
-  } catch (error) {
-    console.error(`❌ Erro ao copiar diretório ${source}:`, error);
-    throw error;
-  }
-}
+// Função copyDirectory removida - era duplicada (já existe na linha 41)
 
 // Função para copiar conteúdo de diretório (sem recursão para evitar loops)
 function copyDirectoryContents(source, destination) {
@@ -2274,14 +2161,14 @@ function copyDirectoryContents(source, destination) {
       if (stat.isDirectory()) {
         // Para diretórios, criar apenas o diretório vazio (não recursivo)
         fs.mkdirSync(destPath, { recursive: true });
-        console.log(`📁 Diretório criado (conteúdo não copiado): ${item}`);
+        log(`📁 Diretório criado (conteúdo não copiado): ${item}`);
       } else {
         fs.copyFileSync(sourcePath, destPath);
-        console.log(`📄 Arquivo copiado: ${item}`);
+        log(`📄 Arquivo copiado: ${item}`);
       }
     }
   } catch (error) {
-    console.error('❌ Erro ao copiar conteúdo do diretório:', error);
+    logError('❌ Erro ao copiar conteúdo do diretório:', error);
     throw error;
   }
 }
@@ -2292,7 +2179,7 @@ async function createCompleteBackup() {
     const archiver = require('archiver');
     const os = require('os');
     
-    console.log('🔄 Criando backup ZIP da pasta de dados...');
+    log('🔄 Criando backup ZIP da pasta de dados...');
     
     // Mostrar diálogo para escolher onde salvar o backup
     const result = await dialog.showSaveDialog(mainWindow, {
@@ -2305,12 +2192,12 @@ async function createCompleteBackup() {
     });
     
     if (result.canceled) {
-      console.log('❌ Backup cancelado pelo usuário');
+      log('❌ Backup cancelado pelo usuário');
       return { success: false, error: 'Backup cancelado pelo usuário' };
     }
     
     const backupPath = result.filePath;
-    console.log(`💾 Salvando backup em: ${backupPath}`);
+    log(`💾 Salvando backup em: ${backupPath}`);
     
     // Criar arquivo ZIP
     const output = fs.createWriteStream(backupPath);
@@ -2320,11 +2207,11 @@ async function createCompleteBackup() {
     
     // Configurar eventos
     output.on('close', () => {
-      console.log(`✅ Backup criado com sucesso: ${archive.pointer()} bytes`);
+      log(`✅ Backup criado com sucesso: ${archive.pointer()} bytes`);
     });
     
     archive.on('error', (err) => {
-      console.error('❌ Erro ao criar backup:', err);
+      logError('❌ Erro ao criar backup:', err);
       throw err;
     });
     
@@ -2332,26 +2219,23 @@ async function createCompleteBackup() {
     archive.pipe(output);
     
     // Adicionar TODOS os arquivos e diretórios (excluir apenas backups anteriores)
-    console.log(`📁 Compactando TODOS os dados de: ${userDataPath}`);
+    log(`📁 Compactando TODOS os dados de: ${userDataPath}`);
     
     // Listar todos os itens na pasta
     const allItems = fs.readdirSync(userDataPath);
-    console.log(`📊 Encontrados ${allItems.length} itens para backup`);
+    log(`📊 Encontrados ${allItems.length} itens para backup`);
     
     // Verificar se há dados importantes
     const hasAccounts = allItems.includes('accounts.json');
     const hasSessions = allItems.some(item => item.startsWith('discord-'));
     const hasCache = allItems.some(item => ['Cache', 'DawnCache', 'GPUCache'].includes(item));
-    const hasAutoBackup = allItems.includes('auto-backup.json');
+    log(`🔍 Verificação de dados:`);
+    log(`  - Contas: ${hasAccounts ? '✅' : '❌'}`);
+    log(`  - Sessões: ${hasSessions ? '✅' : '❌'}`);
+    log(`  - Cache: ${hasCache ? '✅' : '❌'}`);
     
-    console.log(`🔍 Verificação de dados:`);
-    console.log(`  - Contas: ${hasAccounts ? '✅' : '❌'}`);
-    console.log(`  - Sessões: ${hasSessions ? '✅' : '❌'}`);
-    console.log(`  - Cache: ${hasCache ? '✅' : '❌'}`);
-    console.log(`  - Backup automático: ${hasAutoBackup ? '✅' : '❌'}`);
-    
-    if (!hasAccounts && !hasSessions && !hasAutoBackup) {
-      console.warn('⚠️ Nenhum dado importante encontrado para backup');
+    if (!hasAccounts && !hasSessions) {
+      logWarn('⚠️ Nenhum dado importante encontrado para backup');
       return { 
         success: false, 
         error: 'Nenhum dado importante encontrado para backup. Verifique se há contas e sessões salvas.' 
@@ -2372,12 +2256,12 @@ async function createCompleteBackup() {
           estimatedSize += stat.size;
         }
       } catch (error) {
-        console.warn(`⚠️ Erro ao calcular tamanho de ${item}:`, error.message);
+        logWarn(`⚠️ Erro ao calcular tamanho de ${item}:`, error.message);
       }
     }
     
     const estimatedSizeMB = (estimatedSize / (1024 * 1024)).toFixed(2);
-    console.log(`📊 Tamanho estimado dos dados: ${estimatedSizeMB} MB`);
+    log(`📊 Tamanho estimado dos dados: ${estimatedSizeMB} MB`);
     
     let addedCount = 0;
     let skippedCount = 0;
@@ -2388,7 +2272,7 @@ async function createCompleteBackup() {
       
       // Excluir apenas backups anteriores e arquivos temporários
       if (item.startsWith('backup-') || item.startsWith('emergency-') || item.includes('temp')) {
-        console.log(`⏭️ Pulando backup anterior: ${item}`);
+        log(`⏭️ Pulando backup anterior: ${item}`);
         skippedCount++;
         continue;
       }
@@ -2397,24 +2281,24 @@ async function createCompleteBackup() {
         if (stat.isDirectory()) {
           // Adicionar diretório completo
           archive.directory(itemPath, item);
-          console.log(`📁 Adicionando diretório: ${item}`);
+          log(`📁 Adicionando diretório: ${item}`);
           addedCount++;
         } else {
           // Adicionar arquivo
           archive.file(itemPath, { name: item });
-          console.log(`📄 Adicionando arquivo: ${item}`);
+          log(`📄 Adicionando arquivo: ${item}`);
           addedCount++;
         }
       } catch (addError) {
-        console.warn(`⚠️ Erro ao adicionar ${item}:`, addError.message);
+        logWarn(`⚠️ Erro ao adicionar ${item}:`, addError.message);
         skippedCount++;
       }
     }
     
-    console.log(`📊 Resumo do backup:`);
-    console.log(`  - Itens adicionados: ${addedCount}`);
-    console.log(`  - Itens pulados: ${skippedCount}`);
-    console.log(`  - Total processado: ${addedCount + skippedCount}`);
+    log(`📊 Resumo do backup:`);
+    log(`  - Itens adicionados: ${addedCount}`);
+    log(`  - Itens pulados: ${skippedCount}`);
+    log(`  - Total processado: ${addedCount + skippedCount}`);
     
     // Finalizar o arquivo
     await archive.finalize();
@@ -2429,12 +2313,12 @@ async function createCompleteBackup() {
     const stats = fs.statSync(backupPath);
     const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
     
-    console.log(`✅ Backup ZIP criado com sucesso: ${backupPath}`);
-    console.log(`📊 Tamanho do backup: ${fileSizeMB} MB`);
+    log(`✅ Backup ZIP criado com sucesso: ${backupPath}`);
+    log(`📊 Tamanho do backup: ${fileSizeMB} MB`);
     
     // Verificar se o backup tem tamanho razoável (pelo menos 1MB)
     if (stats.size < 1024 * 1024) {
-      console.warn('⚠️ Backup muito pequeno - pode estar incompleto');
+      logWarn('⚠️ Backup muito pequeno - pode estar incompleto');
       return { 
         success: false, 
         error: 'Backup muito pequeno - pode estar incompleto. Verifique se há dados para backup.' 
@@ -2445,7 +2329,7 @@ async function createCompleteBackup() {
     if (estimatedSize > 0) {
       const expectedMinSize = estimatedSize * 0.1; // 10% do tamanho estimado
       if (stats.size < expectedMinSize) {
-        console.warn(`⚠️ Backup muito pequeno comparado ao esperado (${fileSizeMB} MB vs ${(expectedMinSize / (1024 * 1024)).toFixed(2)} MB esperado)`);
+        logWarn(`⚠️ Backup muito pequeno comparado ao esperado (${fileSizeMB} MB vs ${(expectedMinSize / (1024 * 1024)).toFixed(2)} MB esperado)`);
         return { 
           success: false, 
           error: 'Backup muito pequeno comparado ao esperado. Pode estar incompleto.' 
@@ -2455,7 +2339,7 @@ async function createCompleteBackup() {
     
     // Verificar se o backup tem pelo menos alguns arquivos importantes
     if (addedCount < 5) {
-      console.warn('⚠️ Muito poucos arquivos no backup - pode estar incompleto');
+      logWarn('⚠️ Muito poucos arquivos no backup - pode estar incompleto');
       return { 
         success: false, 
         error: 'Muito poucos arquivos no backup - pode estar incompleto. Verifique se há dados para backup.' 
@@ -2467,18 +2351,18 @@ async function createCompleteBackup() {
       const testZip = require('decompress');
       const testPath = path.join(os.tmpdir(), 'backup-test');
       const testResult = await testZip(backupPath, testPath);
-      console.log(`✅ Backup validado: ${testResult.length} arquivos extraídos`);
+      log(`✅ Backup validado: ${testResult.length} arquivos extraídos`);
       
       // Verificar se os arquivos importantes estão no backup
       const testAccounts = testResult.some(file => file.path.includes('accounts.json'));
       const testSessions = testResult.some(file => file.path.includes('discord-'));
       
-      console.log(`🔍 Verificação de integridade:`);
-      console.log(`  - accounts.json: ${testAccounts ? '✅' : '❌'}`);
-      console.log(`  - Sessões Discord: ${testSessions ? '✅' : '❌'}`);
+      log(`🔍 Verificação de integridade:`);
+      log(`  - accounts.json: ${testAccounts ? '✅' : '❌'}`);
+      log(`  - Sessões Discord: ${testSessions ? '✅' : '❌'}`);
       
       if (!testAccounts) {
-        console.warn('⚠️ accounts.json não encontrado no backup');
+        logWarn('⚠️ accounts.json não encontrado no backup');
         return { 
           success: false, 
           error: 'Backup incompleto - accounts.json não encontrado. Tente novamente.' 
@@ -2486,7 +2370,7 @@ async function createCompleteBackup() {
       }
       
       if (!testSessions) {
-        console.warn('⚠️ Sessões Discord não encontradas no backup');
+        logWarn('⚠️ Sessões Discord não encontradas no backup');
         return { 
           success: false, 
           error: 'Backup incompleto - Sessões Discord não encontradas. Tente novamente.' 
@@ -2496,24 +2380,24 @@ async function createCompleteBackup() {
       // Limpar arquivos de teste
       fs.rmSync(testPath, { recursive: true, force: true });
     } catch (validationError) {
-      console.error('❌ Backup inválido:', validationError);
+      logError('❌ Backup inválido:', validationError);
       return { 
         success: false, 
         error: 'Backup criado mas é inválido. Tente novamente.' 
       };
     }
     
-    console.log(`🎉 BACKUP COMPLETO E VÁLIDO!`);
-    console.log(`📊 Estatísticas finais:`);
-    console.log(`  - Tamanho: ${fileSizeMB} MB`);
-    console.log(`  - Tamanho estimado: ${estimatedSizeMB} MB`);
-    console.log(`  - Itens incluídos: ${addedCount}`);
-    console.log(`  - Itens pulados: ${skippedCount}`);
-    console.log(`  - Arquivo: ${backupPath}`);
+    log(`🎉 BACKUP COMPLETO E VÁLIDO!`);
+    log(`📊 Estatísticas finais:`);
+    log(`  - Tamanho: ${fileSizeMB} MB`);
+    log(`  - Tamanho estimado: ${estimatedSizeMB} MB`);
+    log(`  - Itens incluídos: ${addedCount}`);
+    log(`  - Itens pulados: ${skippedCount}`);
+    log(`  - Arquivo: ${backupPath}`);
     
     // Calcular eficiência de compressão
     const compressionRatio = estimatedSize > 0 ? ((estimatedSize - stats.size) / estimatedSize * 100).toFixed(1) : '0';
-    console.log(`📈 Eficiência de compressão: ${compressionRatio}%`);
+    log(`📈 Eficiência de compressão: ${compressionRatio}%`);
     
     return { 
       success: true, 
@@ -2528,7 +2412,7 @@ async function createCompleteBackup() {
     };
     
   } catch (error) {
-    console.error('❌ Erro ao criar backup:', error);
+    logError('❌ Erro ao criar backup:', error);
     return { success: false, error: `Erro ao criar backup: ${error.message}` };
   }
 }
@@ -2539,7 +2423,7 @@ async function restoreCompleteBackup(backupPath) {
     const decompress = require('decompress');
     const os = require('os');
     
-    console.log('🔄 Restaurando backup ZIP...');
+    log('🔄 Restaurando backup ZIP...');
     
     // Se não foi fornecido um caminho, mostrar diálogo para selecionar
     if (!backupPath) {
@@ -2554,7 +2438,7 @@ async function restoreCompleteBackup(backupPath) {
       });
       
       if (result.canceled) {
-        console.log('❌ Restauração cancelada pelo usuário');
+        log('❌ Restauração cancelada pelo usuário');
         return { success: false, error: 'Restauração cancelada pelo usuário' };
       }
       
@@ -2565,11 +2449,11 @@ async function restoreCompleteBackup(backupPath) {
       return { success: false, error: 'Arquivo de backup não encontrado' };
     }
 
-    console.log(`📁 Restaurando backup de: ${backupPath}`);
+    log(`📁 Restaurando backup de: ${backupPath}`);
     
     // Criar backup de emergência da pasta atual
     const tempBackupPath = path.join(os.tmpdir(), `meu-filho-emergency-backup-${Date.now()}`);
-    console.log(`💾 Criando backup de emergência em: ${tempBackupPath}`);
+    log(`💾 Criando backup de emergência em: ${tempBackupPath}`);
     
     try {
       // Criar diretório de backup de emergência
@@ -2584,7 +2468,7 @@ async function restoreCompleteBackup(backupPath) {
         
         // Pular backups anteriores e arquivos temporários
         if (file.startsWith('backup-') || file.startsWith('emergency-') || file.includes('temp')) {
-          console.log(`⏭️ Pulando arquivo de backup no backup de emergência: ${file}`);
+          log(`⏭️ Pulando arquivo de backup no backup de emergência: ${file}`);
           continue;
         }
         
@@ -2594,22 +2478,22 @@ async function restoreCompleteBackup(backupPath) {
           // Copiar diretório (como pastas de sessões)
           fs.mkdirSync(destPath, { recursive: true });
           copyDirectoryContents(filePath, destPath);
-          console.log(`📁 Copiando diretório para backup de emergência: ${file}`);
+          log(`📁 Copiando diretório para backup de emergência: ${file}`);
         } else {
           // Copiar arquivo
           fs.copyFileSync(filePath, destPath);
-          console.log(`📄 Copiando arquivo para backup de emergência: ${file}`);
+          log(`📄 Copiando arquivo para backup de emergência: ${file}`);
         }
       }
       
-      console.log('✅ Backup de emergência criado com sucesso');
+      log('✅ Backup de emergência criado com sucesso');
     } catch (error) {
-      console.warn('⚠️ Não foi possível criar backup de emergência:', error.message);
+      logWarn('⚠️ Não foi possível criar backup de emergência:', error.message);
     }
     
     try {
       // Limpar pasta de dados atual (com tratamento de arquivos bloqueados)
-      console.log('🗑️ Limpando pasta de dados atual...');
+      log('🗑️ Limpando pasta de dados atual...');
       if (fs.existsSync(userDataPath)) {
         const items = fs.readdirSync(userDataPath);
         for (const item of items) {
@@ -2620,36 +2504,36 @@ async function restoreCompleteBackup(backupPath) {
             if (stat.isDirectory()) {
               // Para diretórios, tentar remover com force
               fs.rmSync(itemPath, { recursive: true, force: true });
-              console.log(`🗑️ Diretório removido: ${item}`);
+              log(`🗑️ Diretório removido: ${item}`);
             } else {
               // Para arquivos, tentar remover
               fs.unlinkSync(itemPath);
-              console.log(`🗑️ Arquivo removido: ${item}`);
+              log(`🗑️ Arquivo removido: ${item}`);
             }
           } catch (error) {
             if (error.code === 'EPERM' || error.code === 'EBUSY') {
-              console.log(`⚠️ Arquivo bloqueado pelo sistema, pulando: ${item}`);
+              log(`⚠️ Arquivo bloqueado pelo sistema, pulando: ${item}`);
               // Tentar renomear o arquivo para removê-lo depois
               try {
                 const tempPath = path.join(userDataPath, `${item}.old`);
                 fs.renameSync(itemPath, tempPath);
-                console.log(`📝 Arquivo renomeado para remoção posterior: ${item}`);
+                log(`📝 Arquivo renomeado para remoção posterior: ${item}`);
               } catch (renameError) {
-                console.log(`⚠️ Não foi possível renomear arquivo bloqueado: ${item}`);
+                log(`⚠️ Não foi possível renomear arquivo bloqueado: ${item}`);
               }
             } else {
-              console.log(`⚠️ Erro ao remover ${item}:`, error.message);
+              log(`⚠️ Erro ao remover ${item}:`, error.message);
             }
           }
         }
       }
       
       // Descompactar backup ZIP
-      console.log('📦 Descompactando backup...');
+      log('📦 Descompactando backup...');
       await decompress(backupPath, userDataPath);
       
       // Tentar remover arquivos renomeados (.old) que não puderam ser deletados
-      console.log('🧹 Limpando arquivos renomeados...');
+      log('🧹 Limpando arquivos renomeados...');
       try {
         const items = fs.readdirSync(userDataPath);
         for (const item of items) {
@@ -2662,17 +2546,17 @@ async function restoreCompleteBackup(backupPath) {
               } else {
                 fs.unlinkSync(itemPath);
               }
-              console.log(`🗑️ Arquivo antigo removido: ${item}`);
+              log(`🗑️ Arquivo antigo removido: ${item}`);
             } catch (error) {
-              console.log(`⚠️ Ainda não foi possível remover: ${item}`);
+              log(`⚠️ Ainda não foi possível remover: ${item}`);
             }
           }
         }
       } catch (error) {
-        console.log('⚠️ Erro na limpeza de arquivos antigos:', error.message);
+        log('⚠️ Erro na limpeza de arquivos antigos:', error.message);
       }
       
-      console.log('✅ Backup restaurado com sucesso!');
+      log('✅ Backup restaurado com sucesso!');
       
       // Mostrar diálogo de sucesso
       await dialog.showMessageBox(mainWindow, {
@@ -2691,11 +2575,11 @@ async function restoreCompleteBackup(backupPath) {
       };
       
     } catch (error) {
-      console.error('❌ Erro durante a restauração:', error);
+      logError('❌ Erro durante a restauração:', error);
       
       // Tentar restaurar backup de emergência
       try {
-        console.log('🔄 Tentando restaurar backup de emergência...');
+        log('🔄 Tentando restaurar backup de emergência...');
         if (fs.existsSync(tempBackupPath)) {
           // Limpar pasta atual novamente
           if (fs.existsSync(userDataPath)) {
@@ -2713,10 +2597,10 @@ async function restoreCompleteBackup(backupPath) {
           
           // Restaurar backup de emergência
           await copyDirectory(tempBackupPath, userDataPath);
-          console.log('✅ Backup de emergência restaurado');
+          log('✅ Backup de emergência restaurado');
         }
       } catch (restoreError) {
-        console.error('❌ Erro ao restaurar backup de emergência:', restoreError);
+        logError('❌ Erro ao restaurar backup de emergência:', restoreError);
       }
       
       return { 
@@ -2727,7 +2611,7 @@ async function restoreCompleteBackup(backupPath) {
     }
     
   } catch (error) {
-    console.error('❌ Erro ao restaurar backup:', error);
+    logError('❌ Erro ao restaurar backup:', error);
     return { success: false, error: `Erro ao restaurar backup: ${error.message}` };
   }
 }
@@ -2750,24 +2634,24 @@ function manageBackups() {
       toDelete.forEach(backup => {
         try {
           fs.unlinkSync(backup.path);
-          console.log(`🗑️ Backup antigo removido: ${backup.name}`);
+          log(`🗑️ Backup antigo removido: ${backup.name}`);
               } catch (error) {
-          console.error(`❌ Erro ao remover backup ${backup.name}:`, error);
+          logError(`❌ Erro ao remover backup ${backup.name}:`, error);
         }
       });
     }
 
-    console.log(`📊 Gerenciamento de backups: ${backupFiles.length} backups encontrados`);
+    log(`📊 Gerenciamento de backups: ${backupFiles.length} backups encontrados`);
     return backupFiles.slice(0, 3); // Retornar apenas os 3 mais recentes
                } catch (error) {
-    console.error('❌ Erro no gerenciamento de backups:', error);
+    logError('❌ Erro no gerenciamento de backups:', error);
     return [];
   }
 }
 
 // Handler para criar backup manual
 ipcMain.handle('create-backup', async (event) => {
-  console.log('💾 Preparando backup para próxima inicialização...');
+  log('💾 Preparando backup para próxima inicialização...');
   
   try {
     // Abrir diálogo para escolher onde salvar backup
@@ -2797,7 +2681,7 @@ ipcMain.handle('create-backup', async (event) => {
     };
     
     fs.writeFileSync(intentPath, JSON.stringify(intentData, null, 2), 'utf8');
-    console.log('Intencao de backup salva. App sera fechado para executar backup.');
+    log('Intencao de backup salva. App sera fechado para executar backup.');
     
           // Fechar app para executar backup
           setTimeout(() => {
@@ -2810,7 +2694,7 @@ ipcMain.handle('create-backup', async (event) => {
     };
     
   } catch (error) {
-    console.error('❌ Erro ao preparar backup:', error);
+    logError('❌ Erro ao preparar backup:', error);
     return { 
       success: false, 
       error: error.message 
@@ -2820,7 +2704,7 @@ ipcMain.handle('create-backup', async (event) => {
 
 // Handler para restaurar backup
 ipcMain.handle('restore-backup', async (event) => {
-  console.log('🔄 Preparando restore para próxima inicialização...');
+  log('🔄 Preparando restore para próxima inicialização...');
   
   try {
     // Abrir diálogo para escolher arquivo de backup
@@ -2852,7 +2736,7 @@ ipcMain.handle('restore-backup', async (event) => {
     };
     
     fs.writeFileSync(intentPath, JSON.stringify(intentData, null, 2), 'utf8');
-    console.log('Intencao de restore salva. App sera fechado para executar restore.');
+    log('Intencao de restore salva. App sera fechado para executar restore.');
     
           // Fechar app para executar restore
           setTimeout(() => {
@@ -2865,7 +2749,7 @@ ipcMain.handle('restore-backup', async (event) => {
     };
     
   } catch (error) {
-    console.error('❌ Erro ao preparar restore:', error);
+    logError('❌ Erro ao preparar restore:', error);
     return { 
       success: false, 
       error: error.message 
@@ -2884,7 +2768,7 @@ ipcMain.handle('list-backups', () => {
       date: new Date(backup.timestamp).toLocaleString('pt-BR')
     }));
           } catch (error) {
-    console.error('❌ Erro ao listar backups:', error);
+    logError('❌ Erro ao listar backups:', error);
     return [];
   }
 });
@@ -2901,26 +2785,26 @@ app.whenReady().then(async () => {
     
     // 📤 VERIFICAR SE HÁ BACKUP PARA FAZER
     if (fs.existsSync(backupIntentPath)) {
-        console.log('Executando backup completo pendente...');
+        log('Executando backup completo pendente...');
       const intentData = JSON.parse(fs.readFileSync(backupIntentPath, 'utf8'));
       const backupPath = intentData.backupPath;
       
         // Mostrar alert nativo do Windows
-        console.log('Mostrando alert nativo...');
+        log('Mostrando alert nativo...');
         try {
           const { exec } = require('child_process');
           
           // Alert nativo simples
           exec('msg * "BACKUP INICIADO - Preparando backup... Por favor, aguarde... NAO FECHE O APP!"', (error) => {
             if (error) {
-              console.log('Alert nao pode ser exibido, continuando backup...');
+              log('Alert nao pode ser exibido, continuando backup...');
             } else {
-              console.log('Alert de progresso exibido');
+              log('Alert de progresso exibido');
             }
           });
           
         } catch (error) {
-          console.log('Erro ao mostrar alert, continuando backup...');
+          log('Erro ao mostrar alert, continuando backup...');
         }
       
       // Declarar tempBackupDir no escopo correto
@@ -2933,7 +2817,7 @@ app.whenReady().then(async () => {
           try {
             fs.rmSync(tempBackupDir, { recursive: true, force: true });
           } catch (rmError) {
-            console.log('⚠️ Erro ao remover pasta temporária, tentando método alternativo...');
+            log('⚠️ Erro ao remover pasta temporária, tentando método alternativo...');
             // Método alternativo: renomear e deletar depois
             const tempOldDir = tempBackupDir + '-old-' + Date.now();
             try {
@@ -2943,44 +2827,44 @@ app.whenReady().then(async () => {
                 try {
                   fs.rmSync(tempOldDir, { recursive: true, force: true });
                 } catch (e) {
-                  console.log('⚠️ Não foi possível limpar pasta antiga:', e.message);
+                  log('⚠️ Não foi possível limpar pasta antiga:', e.message);
                 }
               }, 1000);
             } catch (renameError) {
-              console.log('⚠️ Não foi possível renomear pasta, continuando...');
+              log('⚠️ Não foi possível renomear pasta, continuando...');
             }
           }
         }
         fs.mkdirSync(tempBackupDir, { recursive: true });
         
-        console.log('📁 Copiando accounts.json...');
+        log('📁 Copiando accounts.json...');
         if (fs.existsSync(accountsPath)) {
           const accountsData = fs.readFileSync(accountsPath, 'utf8');
           fs.writeFileSync(path.join(tempBackupDir, 'accounts.json'), accountsData, 'utf8');
-          console.log('✅ accounts.json copiado');
+          log('✅ accounts.json copiado');
         } else {
-          console.log('⚠️ Arquivo accounts.json não encontrado');
+          log('⚠️ Arquivo accounts.json não encontrado');
         }
         
-        console.log('📁 Copiando pasta Partitions...');
+        log('📁 Copiando pasta Partitions...');
         if (fs.existsSync(partitionsPath)) {
           // Copiar apenas arquivos essenciais (sem cache desnecessário)
           await copyEssentialPartitions(partitionsPath, path.join(tempBackupDir, 'Partitions'));
-          console.log('✅ Pasta Partitions copiada (otimizada)');
+          log('✅ Pasta Partitions copiada (otimizada)');
         } else {
-          console.log('⚠️ Pasta Partitions não encontrada');
+          log('⚠️ Pasta Partitions não encontrada');
         }
         
-        console.log('🗜️ Criando arquivo ZIP...');
+        log('🗜️ Criando arquivo ZIP...');
         await createZipFile(tempBackupDir, backupPath);
-        console.log('✅ Backup ZIP criado em:', backupPath);
+        log('✅ Backup ZIP criado em:', backupPath);
         
         // Limpar pasta temporária com tratamento de erro
         try {
           fs.rmSync(tempBackupDir, { recursive: true, force: true });
-          console.log('🧹 Pasta temporária removida');
+          log('🧹 Pasta temporária removida');
         } catch (cleanupError) {
-          console.log('⚠️ Erro ao limpar pasta temporária:', cleanupError.message);
+          log('⚠️ Erro ao limpar pasta temporária:', cleanupError.message);
           // Tentar método alternativo
           try {
             const tempOldDir = tempBackupDir + '-cleanup-' + Date.now();
@@ -2989,56 +2873,56 @@ app.whenReady().then(async () => {
               try {
                 fs.rmSync(tempOldDir, { recursive: true, force: true });
               } catch (e) {
-                console.log('⚠️ Não foi possível limpar pasta temporária:', e.message);
+                log('⚠️ Não foi possível limpar pasta temporária:', e.message);
               }
             }, 2000);
           } catch (renameError) {
-            console.log('⚠️ Não foi possível renomear pasta temporária:', renameError.message);
+            log('⚠️ Não foi possível renomear pasta temporária:', renameError.message);
           }
         }
         
         // Remover arquivo de intenção
         fs.unlinkSync(backupIntentPath);
-        console.log('Backup completo concluido!');
+        log('Backup completo concluido!');
         
         // Mostrar alert de sucesso
-        console.log('Mostrando alert de sucesso...');
+        log('Mostrando alert de sucesso...');
         try {
           const { exec } = require('child_process');
           
           exec(`msg * "BACKUP CONCLUIDO COM SUCESSO! Local: ${backupPath} Backup criado!"`, (error) => {
             if (error) {
-              console.log('Alert de sucesso nao pode ser exibido');
+              log('Alert de sucesso nao pode ser exibido');
             } else {
-              console.log('Alert de sucesso exibido');
+              log('Alert de sucesso exibido');
             }
           });
           
         } catch (error) {
-          console.log('Erro ao mostrar alert de sucesso');
+          log('Erro ao mostrar alert de sucesso');
         }
 
         // Apenas mostrar aviso para abrir manualmente
-        console.log('Backup concluido! Abra o app manualmente.');
+        log('Backup concluido! Abra o app manualmente.');
         
       } catch (error) {
-        console.error('❌ Erro durante backup:', error);
+        logError('❌ Erro durante backup:', error);
         
         // Mostrar alert de erro
-        console.log('Mostrando alert de erro...');
+        log('Mostrando alert de erro...');
         try {
           const { exec } = require('child_process');
           
           exec(`msg * "ERRO NO BACKUP! ${error.message} Verifique os logs para mais detalhes."`, (error) => {
             if (error) {
-              console.log('Alert de erro nao pode ser exibido');
+              log('Alert de erro nao pode ser exibido');
             } else {
-              console.log('Alert de erro exibido');
+              log('Alert de erro exibido');
             }
           });
           
         } catch (error) {
-          console.log('Erro ao mostrar alert de erro');
+          log('Erro ao mostrar alert de erro');
         }
         
         // Limpar pasta temporária em caso de erro
@@ -3046,7 +2930,7 @@ app.whenReady().then(async () => {
           try {
             fs.rmSync(tempBackupDir, { recursive: true, force: true });
           } catch (cleanupError) {
-            console.log('⚠️ Erro ao limpar pasta temporária em caso de erro:', cleanupError.message);
+            log('⚠️ Erro ao limpar pasta temporária em caso de erro:', cleanupError.message);
             // Tentar método alternativo
             try {
               const tempOldDir = tempBackupDir + '-error-' + Date.now();
@@ -3055,11 +2939,11 @@ app.whenReady().then(async () => {
                 try {
                   fs.rmSync(tempOldDir, { recursive: true, force: true });
                 } catch (e) {
-                  console.log('⚠️ Não foi possível limpar pasta temporária:', e.message);
+                  log('⚠️ Não foi possível limpar pasta temporária:', e.message);
                 }
               }, 2000);
             } catch (renameError) {
-              console.log('⚠️ Não foi possível renomear pasta temporária:', renameError.message);
+              log('⚠️ Não foi possível renomear pasta temporária:', renameError.message);
             }
           }
         }
@@ -3072,34 +2956,34 @@ app.whenReady().then(async () => {
     
     // 📥 VERIFICAR SE HÁ RESTORE PARA FAZER
     if (fs.existsSync(restoreIntentPath)) {
-      console.log('Executando restore completo pendente...');
+      log('Executando restore completo pendente...');
       const intentData = JSON.parse(fs.readFileSync(restoreIntentPath, 'utf8'));
       const sourcePath = intentData.sourcePath;
       
       // Abrir CMD para mostrar progresso do restore
       // Mostrar alert nativo do Windows para progresso
-        console.log('Mostrando alert nativo...');
+        log('Mostrando alert nativo...');
       try {
         const { exec } = require('child_process');
         
         // Alert nativo simples
         exec('msg * "RESTORE INICIADO - Preparando restauracao... Por favor, aguarde... NAO FECHE O APP!"', (error) => {
           if (error) {
-              console.log('Alert nao pode ser exibido, continuando restore...');
+              log('Alert nao pode ser exibido, continuando restore...');
             } else {
-              console.log('Alert de progresso exibido');
+              log('Alert de progresso exibido');
           }
         });
         
       } catch (error) {
-        console.log('Erro ao mostrar alert, continuando restore...');
+        log('Erro ao mostrar alert, continuando restore...');
       }
       
       try {
         if (fs.existsSync(sourcePath)) {
           // Verificar se é arquivo ZIP
           if (sourcePath.endsWith('.zip')) {
-            console.log('📦 Extraindo arquivo ZIP...');
+            log('📦 Extraindo arquivo ZIP...');
             const AdmZip = require('adm-zip');
             const zip = new AdmZip(sourcePath);
             const tempRestoreDir = path.join(userDataPath, 'temp-restore');
@@ -3112,22 +2996,22 @@ app.whenReady().then(async () => {
             
             // Extrair ZIP
             zip.extractAllTo(tempRestoreDir, true);
-            console.log('✅ ZIP extraído');
+            log('✅ ZIP extraído');
             
             // Restaurar accounts.json
             const accountsBackupPath = path.join(tempRestoreDir, 'accounts.json');
             if (fs.existsSync(accountsBackupPath)) {
               const backupData = fs.readFileSync(accountsBackupPath, 'utf8');
         fs.writeFileSync(accountsPath, backupData, 'utf8');
-              console.log('✅ accounts.json restaurado');
+              log('✅ accounts.json restaurado');
             } else {
-              console.log('⚠️ accounts.json não encontrado no backup');
+              log('⚠️ accounts.json não encontrado no backup');
             }
             
             // Restaurar Partitions
             const partitionsBackupPath = path.join(tempRestoreDir, 'Partitions');
             if (fs.existsSync(partitionsBackupPath)) {
-              console.log('📁 Restaurando Partitions...');
+              log('📁 Restaurando Partitions...');
               
               // Remover Partitions existentes
               if (fs.existsSync(partitionsPath)) {
@@ -3136,26 +3020,26 @@ app.whenReady().then(async () => {
               
               // Copiar Partitions do backup
               await copyDirectory(partitionsBackupPath, partitionsPath);
-              console.log('✅ Partitions (tokens) restaurados');
+              log('✅ Partitions (tokens) restaurados');
             } else {
-              console.log('⚠️ Partitions não encontradas no backup');
+              log('⚠️ Partitions não encontradas no backup');
             }
             
             // Limpar pasta temporária
             fs.rmSync(tempRestoreDir, { recursive: true });
-            console.log('🧹 Pasta temporária removida');
+            log('🧹 Pasta temporária removida');
             
           } else {
             // Backup antigo (não ZIP) - manter compatibilidade
-            console.log('📁 Restaurando backup antigo...');
+            log('📁 Restaurando backup antigo...');
             const backupData = fs.readFileSync(sourcePath, 'utf8');
             fs.writeFileSync(accountsPath, backupData, 'utf8');
-            console.log('✅ accounts.json restaurado de:', sourcePath);
+            log('✅ accounts.json restaurado de:', sourcePath);
             
             // Tentar restaurar Partitions do backup antigo
             const partitionsBackupPath = sourcePath.replace('.json', '-partitions');
             if (fs.existsSync(partitionsBackupPath)) {
-              console.log('📁 Restaurando Partitions de:', partitionsBackupPath);
+              log('📁 Restaurando Partitions de:', partitionsBackupPath);
               
               // Remover Partitions existentes
               if (fs.existsSync(partitionsPath)) {
@@ -3164,57 +3048,57 @@ app.whenReady().then(async () => {
               
               // Copiar Partitions do backup
               await copyDirectory(partitionsBackupPath, partitionsPath);
-              console.log('✅ Partitions (tokens) restaurados de:', partitionsBackupPath);
+              log('✅ Partitions (tokens) restaurados de:', partitionsBackupPath);
             } else {
-              console.log('⚠️ Partitions de backup não encontradas:', partitionsBackupPath);
+              log('⚠️ Partitions de backup não encontradas:', partitionsBackupPath);
             }
           }
         } else {
-          console.log('⚠️ Arquivo de backup não encontrado:', sourcePath);
+          log('⚠️ Arquivo de backup não encontrado:', sourcePath);
         }
         
         // Remover arquivo de intenção
         fs.unlinkSync(restoreIntentPath);
-        console.log('Restore completo concluido!');
+        log('Restore completo concluido!');
         
         // Mostrar alert de sucesso
-        console.log('Mostrando alert de sucesso...');
+        log('Mostrando alert de sucesso...');
         try {
           const { exec } = require('child_process');
           
           exec('msg * "RESTORE CONCLUIDO COM SUCESSO! Contas restauradas! Abra o app manualmente."', (error) => {
             if (error) {
-              console.log('Alert de sucesso nao pode ser exibido');
+              log('Alert de sucesso nao pode ser exibido');
             } else {
-              console.log('Alert de sucesso exibido');
+              log('Alert de sucesso exibido');
             }
           });
           
     } catch (error) {
-          console.log('Erro ao mostrar alert de sucesso');
+          log('Erro ao mostrar alert de sucesso');
         }
 
         // Apenas mostrar aviso para abrir manualmente
-        console.log('Restore concluido! Abra o app manualmente.');
+        log('Restore concluido! Abra o app manualmente.');
         
     } catch (error) {
-        console.error('❌ Erro durante restore:', error);
+        logError('❌ Erro durante restore:', error);
         
         // Mostrar alert de erro
-        console.log('Mostrando alert de erro...');
+        log('Mostrando alert de erro...');
         try {
           const { exec } = require('child_process');
           
           exec(`msg * "ERRO NO RESTORE! ${error.message} Verifique os logs para mais detalhes."`, (error) => {
             if (error) {
-              console.log('Alert de erro nao pode ser exibido');
+              log('Alert de erro nao pode ser exibido');
             } else {
-              console.log('Alert de erro exibido');
+              log('Alert de erro exibido');
             }
           });
           
         } catch (error) {
-          console.log('Erro ao mostrar alert de erro');
+          log('Erro ao mostrar alert de erro');
         }
         
         // Remover arquivo de intenção mesmo em caso de erro
@@ -3225,7 +3109,7 @@ app.whenReady().then(async () => {
     }
     
     } catch (error) {
-    console.log('⚠️ Erro no sistema de backup/restore:', error);
+    log('⚠️ Erro no sistema de backup/restore:', error);
   }
 
   await loadAccounts();
@@ -3239,26 +3123,14 @@ app.whenReady().then(async () => {
   
   // Verificar se todas as sessões foram inicializadas corretamente
   setTimeout(() => {
-    console.log(`🔍 Verificação de sessões: ${sessionMap.size}/${accounts.length} sessões ativas`);
+    log(`🔍 Verificação de sessões: ${sessionMap.size}/${accounts.length} sessões ativas`);
     const missingSessions = accounts.filter(acc => !sessionMap.has(acc.id));
     if (missingSessions.length > 0) {
-      console.log(`⚠️ Contas sem sessão:`, missingSessions.map(acc => `${acc.name} (${acc.id})`));
+      log(`⚠️ Contas sem sessão:`, missingSessions.map(acc => `${acc.name} (${acc.id})`));
     }
   }, 5000);
 
-  // Sistema de backup periódico
-  setInterval(async () => {
-    try {
-      console.log('🔄 Executando backup...');
-      const result = await createCompleteBackup();
-      if (result.success) {
-        manageBackups(); // Gerenciar backups após criar
-           console.log('✅ Backup concluído');
-         }
-       } catch (error) {
-      console.error('❌ Erro no backup:', error);
-    }
-  }, 30 * 60 * 1000); // Backup a cada 30 minutos
+  // Sistema de backup periódico REMOVIDO - causava janelas inesperadas
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -3270,6 +3142,7 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', async () => {
   // Parar timers de limpeza antes de fechar
   stopCleanupTimers();
+  cleanupAllTimers(); // Limpar TODOS os timers
   
   if (process.platform !== 'darwin') {
     app.quit();
@@ -3277,10 +3150,11 @@ app.on('window-all-closed', async () => {
 });
 
  app.on('before-quit', async (event) => {
-   console.log('💾 Salvando dados da sessão antes de sair...');
+   log('💾 Salvando dados da sessão antes de sair...');
    
    // Parar timers de limpeza antes de fechar
    stopCleanupTimers();
+   cleanupAllTimers(); // Limpar TODOS os timers
    
    event.preventDefault();
    
@@ -3290,12 +3164,12 @@ app.on('window-all-closed', async () => {
      let attempts = 0;
      const maxAttempts = 5; // Aumentado para 5 tentativas
      
-     console.log(`📊 Salvando ${accounts.length} contas...`);
+     log(`📊 Salvando ${accounts.length} contas...`);
      
      while (!saved && attempts < maxAttempts) {
        try {
          attempts++;
-         console.log(`💾 Tentativa ${attempts}/${maxAttempts} de salvamento...`);
+         log(`💾 Tentativa ${attempts}/${maxAttempts} de salvamento...`);
          
          // Forçar o salvamento das contas
          const saveResult = writeAccounts(accounts);
@@ -3309,28 +3183,28 @@ app.on('window-all-closed', async () => {
            const savedData = fs.readFileSync(accountsPath, 'utf8');
            const savedAccounts = JSON.parse(savedData);
              
-             console.log(`📊 Contas salvas: ${savedAccounts.length}, Contas atuais: ${accounts.length}`);
+             log(`📊 Contas salvas: ${savedAccounts.length}, Contas atuais: ${accounts.length}`);
            
            if (Array.isArray(savedAccounts) && savedAccounts.length === accounts.length) {
              saved = true;
-             console.log('✅ Dados salvos com sucesso!');
+             log('✅ Dados salvos com sucesso!');
                
                // Log detalhado das contas salvas
                savedAccounts.forEach((account, index) => {
-                 console.log(`  ${index + 1}. ${account.name} (${account.id}) - Ativa: ${account.active}`);
+                 log(`  ${index + 1}. ${account.name} (${account.id}) - Ativa: ${account.active}`);
                });
            } else {
-             console.log('⚠️ Dados não salvos corretamente, tentando novamente...');
+             log('⚠️ Dados não salvos corretamente, tentando novamente...');
            }
          } else {
-           console.log('⚠️ Arquivo não encontrado, tentando novamente...');
+           log('⚠️ Arquivo não encontrado, tentando novamente...');
            }
          } else {
-           console.log('⚠️ writeAccounts retornou false, tentando novamente...');
+           log('⚠️ writeAccounts retornou false, tentando novamente...');
          }
          
        } catch (error) {
-         console.log(`⚠️ Erro na tentativa ${attempts}: ${error.message}`);
+         log(`⚠️ Erro na tentativa ${attempts}: ${error.message}`);
          
          if (attempts < maxAttempts) {
            // Aguardar um pouco antes de tentar novamente
@@ -3340,24 +3214,24 @@ app.on('window-all-closed', async () => {
      }
      
      if (!saved) {
-       console.log('🚨 Falha ao salvar dados após múltiplas tentativas');
+       log('🚨 Falha ao salvar dados após múltiplas tentativas');
        
        // Backup de emergência
        try {
          const userDataPath = app.getPath('userData');
          const emergencyPath = path.join(userDataPath, 'emergency-accounts.json');
          fs.writeFileSync(emergencyPath, JSON.stringify(accounts, null, 2));
-         console.log('🚨 Backup de emergência criado');
+         log('🚨 Backup de emergência criado');
        } catch (emergencyError) {
-         console.error('❌ Falha total no backup de emergência:', emergencyError);
+         logError('❌ Falha total no backup de emergência:', emergencyError);
        }
      }
      
-     console.log('✅ Processo de salvamento finalizado');
+     log('✅ Processo de salvamento finalizado');
      app.exit(0);
      
    } catch (error) {
-     console.error('❌ Erro crítico ao salvar dados da sessão:', error);
+     logError('❌ Erro crítico ao salvar dados da sessão:', error);
      app.exit(0);
    }
  });

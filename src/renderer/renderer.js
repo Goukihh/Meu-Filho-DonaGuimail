@@ -1,13 +1,13 @@
 let accounts = [];
 let currentContextMenuAccountId = null;
-let modalMode = 'add'; // 'add' ou 'edit'
+let modalMode = 'add';
 let editingAccountId = null;
 
-// Sistema de paginação responsivo
+// Paginação responsiva
 let currentPage = 0;
-let ACCOUNTS_PER_PAGE = 20; // Será ajustado dinamicamente baseado na resolução
+let ACCOUNTS_PER_PAGE = 20;
 
-// Cache de performance
+// Cache
 const avatarCache = new Map();
 const sessionCache = new Map();
 
@@ -27,7 +27,7 @@ const imageObserver = new IntersectionObserver((entries) => {
     });
 }, { rootMargin: '50px' });
 
-// Elementos DOM
+// DOM elements
 const avatarTabsContainer = document.getElementById('avatar-tabs');
 const addAccountBtn = document.getElementById('add-account-btn');
 const addAccountModal = document.getElementById('add-account-modal');
@@ -37,7 +37,7 @@ const cancelAddBtn = document.getElementById('cancel-add-btn');
 const closeModalBtn = document.querySelector('.close');
 const contextMenu = document.getElementById('context-menu');
 
-// Elementos de verificação de atualizações
+// Update elements
 const checkUpdatesBtn = document.getElementById('check-updates-btn');
 const updateTab = document.getElementById('update-tab');
 const closeUpdateTab = document.getElementById('close-update-tab');

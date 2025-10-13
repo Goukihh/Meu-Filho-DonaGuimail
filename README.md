@@ -1,5 +1,5 @@
-# 👽 Meu-Filho — DonaGuimail
-*Um jeito simples de gerenciar várias contas do Discord*
+# Meu-Filho
+*Cliente Discord para múltiplas contas*
 
 [![⭐ Give a Star](https://img.shields.io/badge/-Give%20a%20Star-ffcc00?style=flat&logo=github)](https://github.com/Goukihh/Meu-Filho-DonaGuimail)
 
@@ -7,9 +7,9 @@
 
 ## 🇧🇷 Sobre o Projeto
 
-O **Meu-Filho** é um app que eu criei pra resolver um problema que todo mundo tem: gerenciar várias contas do Discord sem ter que ficar fazendo logout/login toda hora.
+**Meu-Filho** é um cliente Discord que permite gerenciar múltiplas contas simultaneamente.
 
-### O que ele faz:
+### Funcionalidades:
 
 - 🔐 **Múltiplas contas**: Adicione quantas contas quiser
 - 🕵️ **Modo stealth**: Evita detecção de automação
@@ -18,7 +18,7 @@ O **Meu-Filho** é um app que eu criei pra resolver um problema que todo mundo t
 - 💾 **Salva tudo**: Suas contas ficam salvas pra sempre
 - 🎨 **Interface bonita**: Design limpo e fácil de usar
 
-### Por que é seguro:
+### Recursos de Segurança:
 
 - **User-Agents únicos**: Cada conta parece um navegador diferente
 - **Discord Canary**: Usa a versão menos restritiva
