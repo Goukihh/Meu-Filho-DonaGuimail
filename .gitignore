@@ -26,8 +26,17 @@ build/
 .DS_Store
 Thumbs.db
 
-# Kill switch (não subir para GitHub)
+# Kill switch (não subir para GitHub - repositório privado separado)
 kill-switch/
+kill-switch-vercel/
+
+# Arquivos privados de automação
+nicks.txt
+nicks-*.txt
+*.plan.md
+
+# Debug screenshots
+debug-screenshots/
 
 # Logs
 logs/
@@ -84,3 +93,37 @@ jspm_packages/
 
 # DynamoDB Local files
 .dynamodb/
+
+# ====================================
+# DADOS DE USUÁRIO (CRÍTICO - NÃO VERSIONAR!)
+# ====================================
+# Dados das contas dos usuários
+accounts.json
+accounts.json.backup
+settings.json
+
+# Dados de sessão do Discord
+Partitions/
+
+# Backups dos usuários
+*.backup.zip
+meu-filho-backup*.zip
+
+# ====================================
+# hCAPTCHA SOLVER (CRÍTICO - NÃO VERSIONAR!)
+# ====================================
+# Credenciais do Google Cloud
+vertex-solver/credentials.json
+vertex-solver/.env
+
+# Ambiente virtual Python
+vertex-solver/venv/
+vertex-solver/__pycache__/
+vertex-solver/*.pyc
+vertex-solver/*.pyo
+
+# Contador de uso Vertex AI
+vertex-usage.json
+
+# ESLint e Prettier
+.eslintcache

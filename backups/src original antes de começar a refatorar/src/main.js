@@ -776,7 +776,7 @@ async function aggressiveMemoryCleanup() {
 
 // SISTEMA DE KILL SWITCH - CONTROLE REMOTO
 const KILL_SWITCH_URL = Buffer.from(
-  'aHR0cHM6Ly90ZXN0ZS16ZXRhLWxhYy52ZXJjZWwuYXBwL2FwaS9zdGF0dXM=',
+  'aHR0cHM6Ly90ZXN0ZS1wcm9kdWN0aW9uLTEyOTIudXAucmFpbHdheS5hcHAvYXBpL3N0YXR1cw==',
   'base64'
 ).toString();
 const KILL_SWITCH_CHECK_INTERVAL = 30 * 60 * 1000; // Verificar a cada 30 minutos (produção)
@@ -1274,46 +1274,26 @@ async function extractProfilePicture(view, accountId) {
 
 // Atualizar bounds da BrowserView
 function updateBrowserViewBounds() {
-  // ✅ VERIFICAR SE JANELA E VIEW EXISTEM E NÃO FORAM DESTRUÍDAS
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    logWarn('⚠️ Tentativa de atualizar bounds com janela destruída');
-    return;
-  }
-  
   const currentView = getCurrentBrowserView();
-  if (!currentView) return;
-  
-  // ✅ VERIFICAR SE VIEW NÃO FOI DESTRUÍDA
-  if (currentView.webContents && currentView.webContents.isDestroyed()) {
-    logWarn('⚠️ Tentativa de atualizar bounds com view destruída');
-    return;
-  }
+  if (!currentView || !mainWindow) return;
   
   // Só tornar visível se o sinal estiver verde (nenhum modal aberto)
   if (isModalOpen) {
     log('🚦 Sinal vermelho: BrowserView permanece escondida');
-    try {
-      currentView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-    } catch (error) {
-      logWarn('⚠️ Erro ao esconder view:', error.message);
-    }
+    currentView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
     return;
   }
   
   log('🚦 Sinal verde: Tornando BrowserView visível');
-  try {
-    const contentBounds = mainWindow.getContentBounds();
-    const topOffset = 158; // 32px barra título + 25px header + 75px abas + 26px ajuste (8px abaixo da linha laranja)
+  const contentBounds = mainWindow.getContentBounds();
+  const topOffset = 158; // 32px barra título + 25px header + 75px abas + 26px ajuste (8px abaixo da linha laranja)
 
-    currentView.setBounds({
-      x: 0,
-      y: topOffset,
-      width: contentBounds.width,
-      height: contentBounds.height - topOffset,
-    });
-  } catch (error) {
-    logError('❌ Erro ao atualizar bounds da view:', error);
-  }
+  currentView.setBounds({
+    x: 0,
+    y: topOffset,
+    width: contentBounds.width,
+    height: contentBounds.height - topOffset,
+  });
 }
 
 // Obter BrowserView ativa
@@ -1383,47 +1363,25 @@ async function isWeakPCModeActive() {
 
 // Handlers IPC
 ipcMain.handle('get-accounts', () => {
-  // ✅ RETORNAR ARRAY EM MEMÓRIA (fonte única da verdade)
-  // Evita race conditions e garante consistência
+  const accountsPath = path.join(app.getPath('userData'), 'accounts.json');
   try {
-    if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
-      log('⚠️ Array de contas vazio, tentando carregar do arquivo');
-      // Fallback: tentar carregar do arquivo
-      const accountsPath = path.join(app.getPath('userData'), 'accounts.json');
-      if (fs.existsSync(accountsPath)) {
-        const data = fs.readFileSync(accountsPath, 'utf-8');
-        const loadedAccounts = JSON.parse(data);
-        if (Array.isArray(loadedAccounts) && loadedAccounts.length > 0) {
-          accounts = loadedAccounts;
-          log(`✅ ${accounts.length} contas carregadas do arquivo (fallback)`);
-        }
-      }
+    if (fs.existsSync(accountsPath)) {
+      const data = fs.readFileSync(accountsPath, 'utf-8');
+      return JSON.parse(data);
     }
-    
-    log(`📋 Retornando ${accounts.length} contas da memória`);
-    return accounts || [];
+    return [];
   } catch (error) {
-    logError('❌ Erro ao obter contas:', error);
-    return accounts || [];
+    logError('Erro ao ler o arquivo de contas:', error);
+    return [];
   }
 });
 
-ipcMain.handle('set-active-account', async (event, accountId) => {
-  try {
-    log(`🔄 Ativando conta: ${accountId}`);
-    accounts.forEach(account => {
-      account.active = account.id === accountId;
-    });
-    
-    // ✅ AGUARDAR SALVAMENTO COMPLETO
-    await writeAccounts(accounts);
-    log(`✅ Conta ativa salva: ${accountId}`);
-    
-    return accounts;
-  } catch (error) {
-    logError(`❌ Erro ao ativar conta ${accountId}:`, error);
-    return accounts;
-  }
+ipcMain.handle('set-active-account', (event, accountId) => {
+  accounts.forEach(account => {
+    account.active = account.id === accountId;
+  });
+  writeAccounts(accounts);
+  return accounts;
 });
 
 ipcMain.handle('remove-account', async (event, accountId) => {
@@ -1448,22 +1406,13 @@ ipcMain.handle('remove-account', async (event, accountId) => {
   return accounts;
 });
 
-ipcMain.handle('update-account', async (event, accountId, accountData) => {
-  try {
-    const account = accounts.find(acc => acc.id === accountId);
-    if (account) {
-      log(`📝 Atualizando conta: ${accountId}`);
-      Object.assign(account, accountData);
-      
-      // ✅ AGUARDAR SALVAMENTO COMPLETO
-      await writeAccounts(accounts);
-      log(`✅ Conta atualizada: ${accountId}`);
-    }
-    return accounts;
-  } catch (error) {
-    logError(`❌ Erro ao atualizar conta ${accountId}:`, error);
-    return accounts;
+ipcMain.handle('update-account', (event, accountId, accountData) => {
+  const account = accounts.find(acc => acc.id === accountId);
+  if (account) {
+    Object.assign(account, accountData);
+    writeAccounts(accounts);
   }
+  return accounts;
 });
 
 ipcMain.handle('switch-account', (event, accountId) => {
@@ -1615,37 +1564,28 @@ ipcMain.on('context-menu-action', async (event, { action, accountId }) => {
 
 // Listener para adicionar nova conta
 ipcMain.handle('add-account', async (event, accountData) => {
-  try {
-    log(`➕ Iniciando adição de nova conta: ${accountData.name}`);
-    
-    const newAccount = {
-      id: `account${Date.now()}`,
-      name: accountData.name || `Conta ${accounts.length + 1}`,
-      profilePicture: accountData.profilePicture || null,
-      active: true,
-    };
-    
-    // Desativar todas as outras contas
-    accounts.forEach(acc => (acc.active = false));
-    
-    accounts.push(newAccount);
-    log(`📊 Total de contas após adição: ${accounts.length}`);
-    
-    // ✅ AGUARDAR SALVAMENTO COMPLETO
-    await writeAccounts(accounts);
-    log(`✅ Nova conta salva: ${newAccount.name}`);
-    
-    await initializeSessionForAccount(newAccount);
-    
-    // Criar e trocar para a BrowserView da nova conta
-    switchToBrowserView(newAccount.id);
-    
-    log(`✅ Nova conta criada: ${newAccount.name} (${newAccount.id})`);
-    return accounts;
-  } catch (error) {
-    logError(`❌ Erro ao adicionar conta:`, error);
-    return accounts;
-  }
+  log(`➕ Iniciando adição de nova conta: ${accountData.name}`);
+  
+  const newAccount = {
+    id: `account${Date.now()}`,
+    name: accountData.name || `Conta ${accounts.length + 1}`,
+    profilePicture: accountData.profilePicture || null,
+    active: true,
+  };
+  
+  // Desativar todas as outras contas
+  accounts.forEach(acc => (acc.active = false));
+  
+  accounts.push(newAccount);
+  writeAccounts(accounts);
+  
+  await initializeSessionForAccount(newAccount);
+  
+  // Criar e trocar para a BrowserView da nova conta
+  switchToBrowserView(newAccount.id);
+  
+  log(`✅ Nova conta criada: ${newAccount.name} (${newAccount.id})`);
+  return accounts;
 });
 
 // Handler para reordenar contas
@@ -1667,10 +1607,9 @@ ipcMain.handle('reorder-accounts', async (event, { fromIndex, toIndex }) => {
     // Mover conta no array
     const [movedAccount] = accounts.splice(fromIndex, 1);
     accounts.splice(toIndex, 0, movedAccount);
-    log(`📊 Contas após reordenação: ${accounts.length}`);
     
-    // ✅ AGUARDAR SALVAMENTO COMPLETO
-    const saved = await writeAccounts(accounts);
+    // Salvar nova ordem
+    const saved = writeAccounts(accounts);
     if (saved) {
       log(`✅ Contas reordenadas com sucesso: ${fromIndex} → ${toIndex}`);
       return { success: true, message: 'Contas reordenadas com sucesso' };
@@ -1685,23 +1624,16 @@ ipcMain.handle('reorder-accounts', async (event, { fromIndex, toIndex }) => {
 });
 
 // Listener para executar renomeação
-ipcMain.on('execute-rename', async (event, { accountId, newName }) => {
+ipcMain.on('execute-rename', (event, { accountId, newName }) => {
   try {
     const account = accounts.find(acc => acc.id === accountId);
     if (account && newName && newName.trim()) {
       const oldName = account.name;
       account.name = newName.trim();
       
-      // ✅ AGUARDAR SALVAMENTO COMPLETO
-      log(`💾 Salvando renomeação: "${oldName}" → "${newName.trim()}"`);
-      await writeAccounts(accounts);
-      log(`✅ Renomeação salva com sucesso`);
-      
-      // ✅ VERIFICAR SE JANELA EXISTE ANTES DE ENVIAR EVENTO
-      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
-        mainWindow.webContents.send('accounts-updated');
-      }
-      
+      // Salvar e notificar interface
+      writeAccounts(accounts);
+      mainWindow.webContents.send('accounts-updated');
       log(`✅ Conta ${accountId} renomeada de "${oldName}" para "${newName.trim()}"`);
       
       // LIBERAR recriação da BrowserView após renomear
@@ -1710,16 +1642,14 @@ ipcMain.on('execute-rename', async (event, { accountId, newName }) => {
       
       // Recriar BrowserView após renomear
       const activeAccount = accounts.find(acc => acc.active);
-      if (activeAccount && !getCurrentBrowserView() && mainWindow && !mainWindow.isDestroyed()) {
+      if (activeAccount && !getCurrentBrowserView()) {
         log(`🔄 Recriando BrowserView após renomeação: ${activeAccount.id}`);
         const view = createBrowserView(activeAccount.id);
-        if (view) {
-          browserViews.set(activeAccount.id, view);
-          mainWindow.setBrowserView(view);
-          setTimeout(() => {
-            updateBrowserViewBounds();
-          }, 100);
-        }
+        browserViews.set(activeAccount.id, view);
+        mainWindow.setBrowserView(view);
+        setTimeout(() => {
+          updateBrowserViewBounds();
+        }, 100);
       }
     } else {
       log(`⚠️ Renomeação falhou: conta ${accountId} não encontrada ou nome inválido`);
@@ -1738,7 +1668,7 @@ ipcMain.on('execute-clear-session', async (event, { accountId }) => {
     await cleanSessionData(accountId);
     
     const clearView = browserViews.get(accountId);
-    if (clearView && !clearView.webContents.isDestroyed()) {
+    if (clearView) {
       clearView.webContents.reload();
     }
     
@@ -1748,16 +1678,14 @@ ipcMain.on('execute-clear-session', async (event, { accountId }) => {
     
     // Recriar BrowserView após limpar
     const activeAccount = accounts.find(acc => acc.active);
-    if (activeAccount && !getCurrentBrowserView() && mainWindow && !mainWindow.isDestroyed()) {
+    if (activeAccount && !getCurrentBrowserView()) {
       log(`🔄 Recriando BrowserView após limpeza: ${activeAccount.id}`);
       const view = createBrowserView(activeAccount.id);
-      if (view) {
-        browserViews.set(activeAccount.id, view);
-        mainWindow.setBrowserView(view);
-        setTimeout(() => {
-          updateBrowserViewBounds();
-        }, 100);
-      }
+      browserViews.set(activeAccount.id, view);
+      mainWindow.setBrowserView(view);
+      setTimeout(() => {
+        updateBrowserViewBounds();
+      }, 100);
     }
   } catch (error) {
     logError(`❌ Erro ao limpar sessão da conta ${accountId}:`, error);
@@ -1770,12 +1698,8 @@ ipcMain.on('execute-remove', async (event, { accountId }) => {
   try {
     const index = accounts.findIndex(acc => acc.id === accountId);
     if (index > -1) {
-      const removedAccount = accounts[index];
-      log(`🗑️ Removendo conta: ${removedAccount.name} (${accountId})`);
-      
       // Remover da lista
       accounts.splice(index, 1);
-      log(`📊 Contas restantes: ${accounts.length}`);
       
       // Limpar sessão e view usando função reutilizável
       await cleanSessionData(accountId);
@@ -1783,33 +1707,15 @@ ipcMain.on('execute-remove', async (event, { accountId }) => {
       
       const view = browserViews.get(accountId);
       if (view) {
-        // ✅ VERIFICAR SE JANELA EXISTE ANTES DE REMOVER VIEW
-        if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow) {
           mainWindow.removeBrowserView(view);
         }
-        
-        // ✅ DESTRUIR VIEW APENAS SE NÃO FOI DESTRUÍDA
-        if (!view.webContents.isDestroyed()) {
-          try {
-            view.webContents.destroy();
-          } catch (destroyError) {
-            logWarn(`⚠️ Erro ao destruir view ${accountId}:`, destroyError.message);
-          }
-        }
-        
         browserViews.delete(accountId);
       }
       
-      // ✅ AGUARDAR SALVAMENTO COMPLETO
-      log(`💾 Salvando lista atualizada (${accounts.length} contas)`);
-      await writeAccounts(accounts);
-      log(`✅ Remoção salva com sucesso`);
-      
-      // ✅ VERIFICAR SE JANELA EXISTE ANTES DE ENVIAR EVENTO
-      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
-        mainWindow.webContents.send('accounts-updated');
-      }
-      
+      // Salvar e notificar interface
+      writeAccounts(accounts);
+      mainWindow.webContents.send('accounts-updated');
       log(`✅ Conta ${accountId} removida com sucesso`);
       
       // LIBERAR recriação da BrowserView após remover
@@ -1818,16 +1724,14 @@ ipcMain.on('execute-remove', async (event, { accountId }) => {
       
       // Recriar BrowserView após remover
       const activeAccount = accounts.find(acc => acc.active);
-      if (activeAccount && !getCurrentBrowserView() && mainWindow && !mainWindow.isDestroyed()) {
+      if (activeAccount && !getCurrentBrowserView()) {
         log(`🔄 Recriando BrowserView após remoção: ${activeAccount.id}`);
         const view = createBrowserView(activeAccount.id);
-        if (view) {
-          browserViews.set(activeAccount.id, view);
-          mainWindow.setBrowserView(view);
-          setTimeout(() => {
-            updateBrowserViewBounds();
-          }, 100);
-        }
+        browserViews.set(activeAccount.id, view);
+        mainWindow.setBrowserView(view);
+        setTimeout(() => {
+          updateBrowserViewBounds();
+        }, 100);
       }
     } else {
       log(`⚠️ Remoção falhou: conta ${accountId} não encontrada`);
@@ -1840,24 +1744,13 @@ ipcMain.on('execute-remove', async (event, { accountId }) => {
 });
 
 // Listener para atualizar foto de perfil
-ipcMain.on('profile-picture-updated', async (event, accountId, avatarUrl) => {
-  try {
-    log(`🖼️ Foto de perfil atualizada para ${accountId}: ${avatarUrl}`);
-    const account = accounts.find(acc => acc.id === accountId);
-    if (account) {
-      account.profilePicture = avatarUrl;
-      
-      // ✅ AGUARDAR SALVAMENTO COMPLETO
-      await writeAccounts(accounts);
-      log(`✅ Avatar salvo: ${accountId}`);
-      
-      // ✅ VERIFICAR SE JANELA EXISTE ANTES DE ENVIAR EVENTO
-      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
-        mainWindow.webContents.send('accounts-updated');
-      }
-    }
-  } catch (error) {
-    logError(`❌ Erro ao atualizar avatar ${accountId}:`, error);
+ipcMain.on('profile-picture-updated', (event, accountId, avatarUrl) => {
+  log(`🖼️ Foto de perfil atualizada para ${accountId}: ${avatarUrl}`);
+  const account = accounts.find(acc => acc.id === accountId);
+  if (account) {
+    account.profilePicture = avatarUrl;
+    writeAccounts(accounts);
+    mainWindow.webContents.send('accounts-updated');
   }
 });
 

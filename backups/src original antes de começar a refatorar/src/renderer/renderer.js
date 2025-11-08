@@ -1198,7 +1198,6 @@ document.addEventListener('click', e => {
 
 // Listeners para eventos do main process
 window.electron.on('profile-picture-updated', (accountId, profilePictureUrl) => {
-  console.log(`🖼️ Foto de perfil atualizada para ${accountId}: ${profilePictureUrl}`);
   const account = accounts.find(acc => acc.id === accountId);
   if (account) {
     account.profilePicture = profilePictureUrl;
@@ -1208,6 +1207,13 @@ window.electron.on('profile-picture-updated', (accountId, profilePictureUrl) => 
 
 window.electron.on('accounts-updated', async () => {
   accounts = await window.electron.invoke('get-accounts');
+  renderAccounts();
+});
+
+// Listener para atualização de foto de perfil
+window.electron.on('profile-picture-updated', (accountId, avatarUrl) => {
+  console.log(`🖼️ Foto de perfil atualizada para ${accountId}: ${avatarUrl}`);
+  // Re-renderizar contas para mostrar nova foto
   renderAccounts();
 });
 

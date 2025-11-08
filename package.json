@@ -1,6 +1,6 @@
 {
   "name": "meu-filho",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Um cliente Discord para múltiplas contas com mascaramento avançado de navegador.",
   "main": "src/main.js",
   "scripts": {
@@ -9,9 +9,11 @@
     "build": "electron-builder --win --publish never",
     "build:portable": "electron-builder --win portable --publish never",
     "build:installer": "electron-builder --win nsis --publish never",
-    "build:single": "electron-builder --win nsis --publish never",
     "build:publish": "electron-builder --win nsis --publish always",
-    "build:release": "electron-builder --win nsis --publish always"
+    "build:release": "electron-builder --win nsis --publish always",
+    "lint": "eslint src/**/*.js",
+    "lint:fix": "eslint src/**/*.js --fix",
+    "format": "prettier --write \"src/**/*.{js,css,html}\""
   },
   "keywords": [
     "discord",
@@ -21,13 +23,20 @@
   "author": "Goukihh",
   "license": "MIT",
   "dependencies": {
-    "adm-zip": "^0.5.16",
     "archiver": "^7.0.1",
-    "decompress": "^4.2.1"
+    "axios": "^1.6.0",
+    "decompress": "^4.2.1",
+    "form-data": "^4.0.4",
+    "https-proxy-agent": "^7.0.6",
+    "pdfkit": "^0.17.2"
   },
   "devDependencies": {
     "electron": "^28.3.3",
     "electron-builder": "^24.13.3",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^9.1.2",
+    "eslint-plugin-node": "^11.1.0",
+    "prettier": "^3.6.2",
     "uglify-js": "^3.19.3"
   },
   "build": {

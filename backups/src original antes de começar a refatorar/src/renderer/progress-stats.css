@@ -1,0 +1,296 @@
+/* ============================================
+   BARRA DE PROGRESSO NO TOPO (TEMA DINÂMICO)
+   ============================================ */
+
+.automation-progress-bar {
+  position: fixed;
+  top: 32px; /* Após a barra de título do Electron */
+  left: 0;
+  right: 0;
+  /* ✅ Fundo com tema dinâmico usando variável CSS */
+  background: linear-gradient(135deg, 
+    color-mix(in srgb, var(--gragas-orange) 15%, #1a1a2e 85%),
+    color-mix(in srgb, var(--gragas-orange) 8%, #1a1a2e 92%)
+  );
+  backdrop-filter: blur(10px);
+  padding: 8px 16px;
+  z-index: 99999;
+  /* ✅ Borda usando tema dinâmico */
+  border-bottom: 1px solid color-mix(in srgb, var(--gragas-orange) 10%, transparent 90%);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  animation: slideDown 0.3s ease-out;
+  pointer-events: none;
+  transition: all 0.3s ease;
+  opacity: 0.85; /* ✅ Transparência padrão */
+}
+
+/* ✅ Quando hover, a barra fica mais sólida e interativa */
+.automation-progress-bar:hover {
+  opacity: 1; /* ✅ Totalmente visível no hover */
+  /* ✅ Borda mais forte com tema dinâmico */
+  border-bottom: 1px solid color-mix(in srgb, var(--gragas-orange) 30%, transparent 70%);
+  pointer-events: auto;
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--gragas-orange) 20%, transparent 80%);
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.75); /* ✅ Mais sutil por padrão */
+  pointer-events: none; /* ✅ Não bloqueia cliques */
+  transition: color 0.3s ease;
+}
+
+/* ✅ Texto mais visível no hover */
+.automation-progress-bar:hover .progress-info {
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.progress-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.progress-percentage {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--gragas-orange);
+  text-shadow: 0 0 8px var(--gragas-orange); /* ✅ Sombra mais sutil */
+  opacity: 0.8; /* ✅ Mais discreto por padrão */
+  transition: opacity 0.3s ease;
+}
+
+/* ✅ Mais visível no hover */
+.automation-progress-bar:hover .progress-percentage {
+  opacity: 1;
+  text-shadow: 0 0 12px var(--gragas-orange);
+}
+
+.progress-track {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08); /* ✅ Mais discreto */
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+  pointer-events: none; /* ✅ Não bloqueia cliques */
+  opacity: 0.7; /* ✅ Mais sutil por padrão */
+  transition: opacity 0.3s ease, background 0.3s ease;
+}
+
+/* ✅ Mais visível no hover */
+.automation-progress-bar:hover .progress-track {
+  background: rgba(255, 255, 255, 0.12);
+  opacity: 1;
+}
+
+.progress-fill {
+  height: 100%;
+  /* ✅ USA O GRADIENTE DO TEMA DINÂMICO */
+  background: var(--sunset-gradient);
+  background-size: 200% 100%;
+  animation: shimmer 3s infinite linear;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  border-radius: 4px;
+  /* ✅ Sombra dinâmica baseada na cor do tema */
+  box-shadow: 0 0 10px var(--gragas-orange),
+              0 0 20px color-mix(in srgb, var(--gragas-orange) 30%, transparent 70%);
+}
+
+/* Efeito de brilho animado */
+.progress-shine {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.3),
+    transparent
+  );
+  animation: shine 2s infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes shine {
+  0% {
+    left: -100%;
+  }
+  100% {
+    left: 200%;
+  }
+}
+
+/* ✅ REMOVIDO: A barra agora flutua sobre o conteúdo ao invés de empurrá-lo para baixo
+   Isso evita que o conteúdo seja deslocado e que a barra fique atrás da webview do Discord */
+
+/* ============================================
+   ESTATÍSTICAS NO PAINEL DE AUTOMAÇÃO
+   ============================================ */
+
+.automation-stats {
+  background: var(--bg-secondary);
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 20px;
+  margin: 20px 0;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.automation-stats h3 {
+  margin: 0 0 20px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 15px;
+}
+
+.stat-card {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 15px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  /* Borda superior com cor do tema */
+  background: var(--sunset-gradient);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--gragas-orange);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.stat-card:hover::before {
+  opacity: 1;
+}
+
+.stat-icon {
+  font-size: 24px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.stat-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1;
+  /* Gradiente de texto com tema dinâmico */
+  background: var(--sunset-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Animação de fade in */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Responsividade */
+@media (max-width: 768px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .automation-progress-bar {
+    padding: 10px 15px;
+  }
+  
+  .progress-info {
+    font-size: 11px;
+  }
+  
+  .progress-percentage {
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+

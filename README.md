@@ -26,6 +26,19 @@
 - **Sessões separadas**: Cada conta é independente
 - **Headers realistas**: Simula um navegador real
 
+### 🤖 hCaptcha Solver (Novo!)
+
+Sistema automático para resolver CAPTCHAs de texto usando IA:
+- ✅ **Resolução automática** de perguntas sim/não
+- ✅ **Google Vertex AI** para OCR e análise
+- ✅ **Humanização**: delays aleatórios + taxa de erro
+- ✅ **Controle de gastos**: limite mensal configurável
+- ✅ **Modo fallback**: volta para manual se API offline
+
+📖 **Guia completo**: [HCAPTCHA-SOLVER-GUIDE.md](HCAPTCHA-SOLVER-GUIDE.md)
+
+⚠️ **Recomendado**: Teste em contas descartáveis primeiro!
+
 ---
 
 ## 🇺🇸 About the Project
