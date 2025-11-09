@@ -302,27 +302,6 @@ const timerManager = new TimerManager();
 // Array global para rastrear todos os timeouts/intervals
 const globalTimers = [];
 
-// Função helper para criar timeout rastreável (opcional, disponível para uso futuro)
-// eslint-disable-next-line no-unused-vars
-function createTimeout(callback, delay) {
-  const timeoutId = setTimeout(() => {
-    callback();
-    // Remover do array após executar
-    const index = globalTimers.indexOf(timeoutId);
-    if (index > -1) globalTimers.splice(index, 1);
-  }, delay);
-  globalTimers.push(timeoutId);
-  return timeoutId;
-}
-
-// Função helper para criar interval rastreável (opcional, disponível para uso futuro)
-// eslint-disable-next-line no-unused-vars
-function createInterval(callback, delay) {
-  const intervalId = setInterval(callback, delay);
-  globalTimers.push(intervalId);
-  return intervalId;
-}
-
 // Limpar todos os timers globais
 function clearAllTimers() {
   log(`🧹 Limpando ${globalTimers.length} timers globais...`);
@@ -340,13 +319,11 @@ const defaultAccounts = [
   { id: 'account3', name: 'Conta 3', profilePicture: null, active: false },
 ];
 
-// User-Agents realistas para rotação
+// User-Agents realistas para rotação (versões mais recentes do Chrome)
 const REALISTIC_USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
 ];
 
 // Função para calcular tamanho de diretório
@@ -1033,14 +1010,29 @@ async function loadAccounts() {
         accounts = defaultAccounts;
         writeAccounts(accounts);
       } else {
-      accounts = JSON.parse(data);
-      log(`📱 ${accounts.length} contas carregadas do arquivo.`);
-        
-        // Verificar se as contas são válidas
-        if (!Array.isArray(accounts) || accounts.length === 0) {
-          log('⚠️ Contas inválidas, usando contas padrão');
-          accounts = defaultAccounts;
-          writeAccounts(accounts);
+        try {
+          accounts = JSON.parse(data);
+          log(`📱 ${accounts.length} contas carregadas do arquivo.`);
+          
+          // ✅ PROTEÇÃO CRÍTICA: NUNCA sobrescrever contas reais com padrão
+          // Se o arquivo tem mais de 3 contas, NÃO substituir por padrão mesmo se houver erro
+          if (!Array.isArray(accounts) || accounts.length === 0) {
+            log('⚠️ Contas inválidas, usando contas padrão');
+            accounts = defaultAccounts;
+            writeAccounts(accounts);
+          } else if (accounts.length === 3 && JSON.stringify(accounts) === JSON.stringify(defaultAccounts)) {
+            // Se são exatamente as 3 contas padrão, ok usar padrão
+            log('📋 Usando contas padrão');
+          } else {
+            // Se tem mais de 3 contas OU são diferentes do padrão, NUNCA sobrescrever
+            log(`✅ ${accounts.length} contas do usuário carregadas - protegidas contra sobrescrita`);
+          }
+        } catch (parseError) {
+          logError('❌ Erro ao fazer parse do JSON de contas:', parseError);
+          // 🔒 SE JÁ EXISTE arquivo e tem conteúdo, NÃO sobrescrever cegamente
+          log('⚠️ Mantendo arquivo existente - não sobrescrevendo com contas padrão');
+          accounts = defaultAccounts; // Usar padrão EM MEMÓRIA mas NÃO salvar
+          // NÃO chamar writeAccounts aqui para não sobrescrever
         }
       }
       
@@ -1888,8 +1880,23 @@ async function checkForUpdates() {
       res.on('end', () => {
         try {
           const release = JSON.parse(data);
-          const latestVersion = release.tag_name.replace('v', '');
           const currentVersion = require('../package.json').version;
+          
+          // ✅ VALIDAÇÃO: Se não tem tag_name, assumir que não há releases
+          if (!release || !release.tag_name) {
+            log('⚠️ Nenhuma release encontrada no GitHub');
+            // Retornar como "sem atualização" ao invés de erro
+            resolve({
+              hasUpdate: false,
+              currentVersion,
+              latestVersion: currentVersion, // Mesma versão
+              downloadUrl: '',
+              releaseNotes: 'Nenhuma release disponível no GitHub.',
+            });
+            return;
+          }
+          
+          const latestVersion = release.tag_name.replace('v', '');
           
           log(`🔍 Versão atual: ${currentVersion}`);
           log(`🔍 Última versão: ${latestVersion}`);
@@ -3706,6 +3713,26 @@ ipcMain.handle('open-bot-detection-test', async (event, url) => {
 
 // Handlers de cookies removidos - captcha manual
 
+// ====================================================
+// 🔒 SISTEMA DE INSTÂNCIA ÚNICA
+// ====================================================
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  // Já existe uma instância rodando - fechar esta nova
+  console.log('⚠️ Outra instância do Meu Filho já está rodando - fechando duplicada');
+  app.quit();
+} else {
+  // Se alguém tentar abrir segunda instância, focar na primeira
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
+    log('🔔 Tentativa de abrir segunda instância detectada - focando na janela principal');
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 // Eventos do app
 app.whenReady().then(async () => {
   // 🧹 LIMPAR COOKIES ANTIGOS DO HCAPTCHA (SE EXISTIREM)
@@ -4363,7 +4390,6 @@ app.whenReady().then(async () => {
             currentCiclo: savedProgress ? savedProgress.currentCiclo : 1,
             currentAccountIndex: savedProgress ? savedProgress.currentAccountIndex : 0,
             totalInvitesSent: savedProgress ? savedProgress.totalInvitesSent : 0,
-            config: { delayMin: 500, delayMax: 1500 },
             nicksList: nicks,
             currentNickIndex: savedProgress ? savedProgress.currentNickIndex : 0,
             // ✅ Usar webhook de settings.json (persistência permanente)
@@ -5457,28 +5483,38 @@ app.whenReady().then(async () => {
             automationLog(`🔄 Trocando para conta ${account.name}...`);
             await switchToAccount(account.id);
             
-            // 2. Aguardar a view carregar completamente
+            // 2. Aguardar a view carregar completamente (OTIMIZADO!)
             automationLog(`⏳ Aguardando Discord carregar...`);
-            await sleep(500 + Math.random() * 500); // 0.5-1s
+            await sleep(250 + Math.random() * 200); // 0.25-0.45s (SUPER RÁPIDO!)
             
             await waitWhilePaused();
             
-            // Navegar para Add Friend
-            automationLog(`Navegando para Add Friend...`);
-            const navSuccess = await navigateToAddFriend();
-            if (!navSuccess) {
-              automationLog(`Falha ao navegar para Add Friend (conta provavelmente deslogada) - pulando conta`);
-              
-              recordAccountPerformance(account.name, false, 'other', 'Conta deslogada ou seletores não encontrados');
-              automationErrorCount++;
-              saveIncrementalStats();
-              
-              continue;
-            }
+            // ✅ DETECÇÃO INTELIGENTE: Verificar se campo de input já está visível (TODOS OS CICLOS)
+            automationLog(`🔍 Verificando se campo de username está pronto...`);
+            const alreadyOnPage = await checkIfOnAddFriendPage();
             
-            // Aguardar página carregar
-            automationLog(`Aguardando página carregar...`);
-            await sleep(800 + Math.random() * 200);
+            if (alreadyOnPage) {
+              automationLog(`✅ Campo detectado - pulando navegação (economiza ~2s)`);
+              // Delay MÍNIMO - só garante que JS finalizou renderização
+              await sleep(50);
+            } else {
+              // Campo não encontrado - fazer caminho completo: Friends → Add Friend
+              automationLog(`🧭 Campo não detectado - navegando para Add Friend...`);
+              const navSuccess = await navigateToAddFriend();
+              if (!navSuccess) {
+                automationLog(`❌ Falha ao navegar para Add Friend (conta provavelmente deslogada) - pulando conta`);
+                
+                recordAccountPerformance(account.name, false, 'other', 'Conta deslogada ou seletores não encontrados');
+                automationErrorCount++;
+                saveIncrementalStats();
+                
+                continue;
+              }
+              
+              // Aguardar página carregar
+              automationLog(`⏳ Aguardando página carregar...`);
+              await sleep(600 + Math.random() * 200); // 0.6-0.8s (reduzido de 0.8-1s)
+            }
             
             await waitWhilePaused();
             
@@ -5497,9 +5533,9 @@ app.whenReady().then(async () => {
               continue;
             }
             
-            // 6. Delay para o Discord processar
+            // 6. Delay para o Discord processar (reduzido)
             automationLog(`⏳ Aguardando processamento...`);
-            await sleep(300 + Math.random() * 200); // 0.3-0.5s
+            await sleep(200 + Math.random() * 150); // 0.2-0.35s (reduzido de 0.3-0.5s)
             
             await waitWhilePaused();
             
@@ -5838,6 +5874,21 @@ app.whenReady().then(async () => {
         log('⚠️ Não foi possível carregar contas diárias');
       }
       
+      // ✅ VALIDAÇÃO: Bloquear automação se Contas Diárias não foi configurada
+      if (!dailyAccountsTotal || dailyAccountsTotal <= 0) {
+        automationLog('❌ ERRO: Configure a quantidade de Contas Diárias antes de iniciar a automação!');
+        automationLog('💡 Vá até "Identificação do Relatório" e preencha o campo "Contas Diárias (usadas HOJE)"');
+        
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('automation-error', {
+            message: 'Configure a quantidade de Contas Diárias antes de iniciar!',
+            details: 'Vá até "Identificação do Relatório" e preencha o campo.'
+          });
+        }
+        
+        return; // Parar execução
+      }
+      
       // Carregar ou inicializar progresso da leva
       let levaProgress = loadLevaProgress();
       if (!levaProgress || levaProgress.levaNumber !== currentLevaNum) {
@@ -5950,8 +6001,15 @@ app.whenReady().then(async () => {
       const rate = totalInvites > 0 ? (totalInvites / (elapsedMs / 60000)).toFixed(1) : 0;
       const successRate = totalInvites > 0 ? Math.round((automationSuccessCount / totalInvites) * 100) : 0;
       
+      // Calcular nicks restantes
+      const nicksTotal = automationEngine.nicksList ? automationEngine.nicksList.length : 0;
+      const nicksUsados = automationEngine.currentNickIndex || 0;
+      const nicksRestantes = nicksTotal - nicksUsados;
+      
       const finalStats = {
-        nicksLoaded: automationEngine.nicksList ? automationEngine.nicksList.length : 0,
+        nicksLoaded: nicksTotal,
+        nicksUsed: nicksUsados,
+        nicksRemaining: nicksRestantes,
         accountsVisible: groupAccounts.length,
         totalInvites: totalInvites,
         successCount: automationSuccessCount,
@@ -5962,7 +6020,7 @@ app.whenReady().then(async () => {
         lastUpdate: new Date().toISOString()
       };
       
-      // ✅ SÓ SALVAR e ENVIAR se leva completa
+      // SÓ SALVAR e ENVIAR se leva completa
       if (levaCompleta) {
         saveAutomationStats(finalStats);
         automationLog(`💾 Estatísticas salvas: ${totalInvites} convites, ${elapsedText}, ${rate}/min, ${successRate}% sucesso`);
@@ -6085,8 +6143,91 @@ app.whenReady().then(async () => {
     }
   }
   
-  async function navigateToAddFriend() {
-    automationLog(`🧭 Navegando para Add Friend...`);
+  async function checkIfOnAddFriendPage() {
+    try {
+      const currentView = getCurrentBrowserView();
+      if (!currentView || !currentView.webContents) {
+        automationLog('⚠️ [DETECT] BrowserView não disponível');
+        return false;
+      }
+      
+      // Apenas verificar se campo + botão estão prontos (COM LOGS DETALHADOS)
+      const result = await currentView.webContents.executeJavaScript(`
+        ${selectorsCode}
+        
+        (function() {
+          try {
+            console.log('🔍 [DETECT] Iniciando verificação...');
+            
+            // 1. Campo de input existe e está visível?
+            console.log('🔍 [DETECT] Etapa 1: Procurando input...');
+            const inputResult = findUsernameInput();
+            if (!inputResult.success) {
+              console.log('❌ [DETECT] Input NÃO encontrado - FALHA na etapa 1');
+              return { success: false, step: 1, reason: 'Input não encontrado' };
+            }
+            console.log('✅ [DETECT] Input encontrado via:', inputResult.method);
+            
+            const input = inputResult.element;
+            
+            // 2. Está visível na viewport?
+            console.log('🔍 [DETECT] Etapa 2: Verificando visibilidade...');
+            const rect = input.getBoundingClientRect();
+            const isVisible = rect.width > 0 && rect.height > 0;
+            console.log('📐 [DETECT] Dimensões:', { width: rect.width, height: rect.height });
+            
+            if (!isVisible) {
+              console.log('❌ [DETECT] Input não visível - FALHA na etapa 2');
+              return { success: false, step: 2, reason: 'Input não visível' };
+            }
+            console.log('✅ [DETECT] Input visível');
+            
+            // 3. Não está disabled?
+            console.log('🔍 [DETECT] Etapa 3: Verificando se está habilitado...');
+            if (input.disabled || input.readOnly) {
+              console.log('❌ [DETECT] Input desabilitado - FALHA na etapa 3');
+              return { success: false, step: 3, reason: 'Input desabilitado' };
+            }
+            console.log('✅ [DETECT] Input habilitado');
+            
+            // 4. Botão Send Friend Request existe?
+            console.log('🔍 [DETECT] Etapa 4: Procurando botão Send...');
+            const buttonResult = findSendFriendRequestButton();
+            if (!buttonResult.success) {
+              console.log('❌ [DETECT] Botão Send NÃO encontrado - FALHA na etapa 4');
+              return { success: false, step: 4, reason: 'Botão Send não encontrado' };
+            }
+            console.log('✅ [DETECT] Botão Send encontrado via:', buttonResult.method);
+            
+            // ✅ Se passou: campo + botão prontos = pode digitar direto!
+            console.log('✅✅✅ [DETECT] TODAS AS VERIFICAÇÕES PASSARAM - PÁGINA DETECTADA!');
+            return { success: true };
+          } catch (e) {
+            console.log('❌ [DETECT] Erro na verificação:', e.message);
+            return { success: false, step: 0, reason: 'Erro: ' + e.message };
+          }
+        })();
+      `);
+      
+      if (result && result.success) {
+        automationLog('✅ [DETECT] Página detectada com sucesso!');
+        return true;
+      } else {
+        automationLog(`❌ [DETECT] Falhou na etapa ${result.step}: ${result.reason}`);
+        return false;
+      }
+    } catch (error) {
+      automationLog(`⚠️ [DETECT] Erro ao detectar: ${error.message}`);
+      // Em caso de erro, retornar false para forçar navegação normal (seguro)
+      return false;
+    }
+  }
+  
+  async function navigateToAddFriend(retryCount = 0) {
+    const maxRetries = 2; // Tenta até 2 vezes
+    const timeoutMs = 10000; // 10 segundos de timeout
+    
+    automationLog(`🧭 Navegando para Add Friend... ${retryCount > 0 ? `(tentativa ${retryCount + 1}/${maxRetries + 1})` : ''}`);
     
     try {
       const currentView = getCurrentBrowserView();
@@ -6094,8 +6235,8 @@ app.whenReady().then(async () => {
         throw new Error('BrowserView não encontrada');
       }
       
-      // ✅ Usar seletores centralizados
-      const result = await currentView.webContents.executeJavaScript(`
+      // ✅ TIMEOUT: Se não responder em 10s, aborta
+      const navigationPromise = currentView.webContents.executeJavaScript(`
         ${selectorsCode}
         
         (async function() {
@@ -6126,16 +6267,42 @@ app.whenReady().then(async () => {
         })();
       `);
       
-      automationLog(`✅ Navegação: ${result.message}`);
-      return result.success;
+      // Criar promise de timeout
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout: navegação demorou mais de 10s')), timeoutMs)
+      );
+      
+      // Race: quem terminar primeiro ganha
+      const result = await Promise.race([navigationPromise, timeoutPromise]);
+      
+      if (result.success) {
+        automationLog(`✅ Navegação: ${result.message}`);
+        return true;
+      } else {
+        throw new Error(result.message);
+      }
     } catch (error) {
+      const errorMsg = error.message || 'Erro desconhecido';
+      
+      // Se timeout ou erro E ainda tem tentativas, RETRY
+      if (retryCount < maxRetries) {
+        automationLog(`⚠️ Erro na navegação: ${errorMsg} - TENTANDO NOVAMENTE...`);
+        await sleep(1000); // Aguarda 1s antes de tentar novamente
+        return navigateToAddFriend(retryCount + 1); // Recursivo com contador
+      }
+      
+      // Se esgotou tentativas, falha definitivamente
+      automationLog(`❌ Falha definitiva após ${maxRetries + 1} tentativas: ${errorMsg}`);
       logError('❌ Erro na navegação:', error);
       return false;
     }
   }
   
-  async function typeNick(nick) {
-    automationLog(`⌨️ Digitando nick: ${nick}`);
+  async function typeNick(nick, retryCount = 0) {
+    const maxRetries = 1; // Tenta até 1x (total 2 tentativas)
+    const timeoutMs = 5000; // 5 segundos de timeout
+    
+    automationLog(`⌨️ Digitando nick: ${nick}${retryCount > 0 ? ` (tentativa ${retryCount + 1}/${maxRetries + 1})` : ''}`);
     
     try {
       const currentView = getCurrentBrowserView();
@@ -6143,8 +6310,8 @@ app.whenReady().then(async () => {
         throw new Error('BrowserView não encontrada');
       }
       
-      // Executar JavaScript no Discord para digitar o nick caractere por caractere
-      const result = await currentView.webContents.executeJavaScript(`
+      // ✅ TIMEOUT: Se não responder em 5s, aborta
+      const typePromise = currentView.webContents.executeJavaScript(`
         (async function() {
           try {
             const nick = ${JSON.stringify(nick)};
@@ -6211,16 +6378,42 @@ app.whenReady().then(async () => {
         })();
       `);
       
-      automationLog(`✅ Nick digitado: ${result.message}`);
-      return result.success;
+      // Criar promise de timeout
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout: digitação demorou mais de 5s')), timeoutMs)
+      );
+      
+      // Race: quem terminar primeiro ganha
+      const result = await Promise.race([typePromise, timeoutPromise]);
+      
+      if (result.success) {
+        automationLog(`✅ Nick digitado: ${result.message}`);
+        return true;
+      } else {
+        throw new Error(result.message);
+      }
     } catch (error) {
+      const errorMsg = error.message || 'Erro desconhecido';
+      
+      // Se timeout ou erro E ainda tem tentativas, RETRY
+      if (retryCount < maxRetries) {
+        automationLog(`⚠️ Erro ao digitar: ${errorMsg} - TENTANDO NOVAMENTE...`);
+        await sleep(500); // Aguarda 0.5s antes de tentar novamente
+        return typeNick(nick, retryCount + 1); // Recursivo com contador
+      }
+      
+      // Se esgotou tentativas, falha definitivamente
+      automationLog(`❌ Falha definitiva ao digitar após ${maxRetries + 1} tentativas: ${errorMsg}`);
       logError('❌ Erro ao digitar nick:', error);
       return false;
     }
   }
   
-  async function clickSendFriendRequest() {
-    automationLog(`📤 Clicando em Send Friend Request...`);
+  async function clickSendFriendRequest(retryCount = 0) {
+    const maxRetries = 1; // Tenta até 1x (total 2 tentativas)
+    const timeoutMs = 12000; // 12 segundos de timeout (tempo maior pois já tem espera interna)
+    
+    automationLog(`📤 Clicando em Send Friend Request${retryCount > 0 ? ` (tentativa ${retryCount + 1}/${maxRetries + 1})` : ''}...`);
     
     try {
       const currentView = getCurrentBrowserView();
@@ -6228,8 +6421,8 @@ app.whenReady().then(async () => {
         throw new Error('BrowserView não encontrada');
       }
       
-      // Clicar no botão "Send Friend Request"
-      const result = await currentView.webContents.executeJavaScript(`
+      // ✅ TIMEOUT: Se não responder em 12s, aborta
+      const clickPromise = currentView.webContents.executeJavaScript(`
         (async function() {
           try {
             // Tentar até 10 vezes (10 segundos) aguardar botão habilitar
@@ -6260,9 +6453,32 @@ app.whenReady().then(async () => {
         })();
       `);
       
-      automationLog(`✅ Click executado: ${result.message}`);
-      return result.success;
+      // Criar promise de timeout
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout: clique demorou mais de 12s')), timeoutMs)
+      );
+      
+      // Race: quem terminar primeiro ganha
+      const result = await Promise.race([clickPromise, timeoutPromise]);
+      
+      if (result.success) {
+        automationLog(`✅ Click executado: ${result.message}`);
+        return true;
+      } else {
+        throw new Error(result.message);
+      }
     } catch (error) {
+      const errorMsg = error.message || 'Erro desconhecido';
+      
+      // Se timeout ou erro E ainda tem tentativas, RETRY
+      if (retryCount < maxRetries) {
+        automationLog(`⚠️ Erro ao clicar: ${errorMsg} - TENTANDO NOVAMENTE...`);
+        await sleep(500); // Aguarda 0.5s antes de tentar novamente
+        return clickSendFriendRequest(retryCount + 1); // Recursivo com contador
+      }
+      
+      // Se esgotou tentativas, falha definitivamente
+      automationLog(`❌ Falha definitiva ao clicar após ${maxRetries + 1} tentativas: ${errorMsg}`);
       logError('❌ Erro ao clicar:', error);
       return false;
     }

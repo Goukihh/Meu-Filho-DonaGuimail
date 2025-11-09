@@ -109,6 +109,13 @@ Partitions/
 *.backup.zip
 meu-filho-backup*.zip
 
+# Backups locais (pasta de desenvolvimento)
+backup_*/
+backups/
+backup_primeiro/
+backup_limpeza_*/
+src original antes de começar a refatorar/
+
 # ====================================
 # hCAPTCHA SOLVER (CRÍTICO - NÃO VERSIONAR!)
 # ====================================

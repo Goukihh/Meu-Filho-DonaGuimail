@@ -452,7 +452,10 @@
       <div class="automation-tab-content">
         <div class="automation-tab-header">
           <h2>Automação de Convites</h2>
-          <button id="close-automation-tab" class="close-automation-btn">&times;</button>
+          <div class="header-buttons">
+            <button id="help-automation-btn" class="help-automation-btn" title="Como usar a automação">?</button>
+            <button id="close-automation-tab" class="close-automation-btn">&times;</button>
+          </div>
         </div>
         <div class="automation-tab-body">
           <!-- Indicador de Pausa -->
@@ -469,6 +472,13 @@
                 <div class="stat-content">
                   <div class="stat-label">Nicks Carregados</div>
                   <div class="stat-value" id="stat-nicks-loaded">-</div>
+                </div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-icon">📝</div>
+                <div class="stat-content">
+                  <div class="stat-label">Nicks Restantes</div>
+                  <div class="stat-value" id="stat-nicks-remaining">-</div>
                 </div>
               </div>
               <div class="stat-card">
@@ -618,17 +628,6 @@
 
           <!-- Configurações de Delay -->
           <div class="automation-config">
-            <h3>Configurações de Velocidade</h3>
-            <div class="config-grid">
-              <div class="config-item">
-                <label for="delay-min">Delay Mínimo (segundos):</label>
-                <input type="number" id="delay-min" value="0.5" min="0.3" max="3" step="0.1" />
-              </div>
-              <div class="config-item">
-                <label for="delay-max">Delay Máximo (segundos):</label>
-                <input type="number" id="delay-max" value="1.5" min="0.5" max="5" step="0.1" />
-              </div>
-            </div>
             <div class="automation-info">
               <p>
                 <strong>Modo:</strong> 1 leva = 4 ciclos = 4 convites por conta = 80 convites total
@@ -857,6 +856,132 @@
           <button class="confirm-btn confirm-confirm" onclick="handleCustomConfirm(true)">
             CONFIRMAR
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Tutorial de Automação -->
+    <div id="tutorial-modal" class="tutorial-modal" style="display: none;">
+      <div class="tutorial-content">
+        <div class="tutorial-header">
+          <h2>🎓 Como Usar a Automação</h2>
+          <button id="close-tutorial-btn" class="close-tutorial-btn">&times;</button>
+        </div>
+        <div class="tutorial-body">
+          
+          <div class="tutorial-section">
+            <h3>📋 PASSO 1: Preparar Lista de Nicks</h3>
+            <ul>
+              <li>Crie um arquivo <strong>.txt</strong></li>
+              <li>Coloque um username por linha</li>
+              <li>Clique em <strong>"Carregar Nicks"</strong></li>
+            </ul>
+          </div>
+
+          <div class="tutorial-divider"></div>
+
+          <div class="tutorial-section">
+            <h3>🔔 PASSO 2: Configurar Webhook (Relatórios)</h3>
+            <ul>
+              <li>Abra seu <strong>servidor Discord PRIVADO</strong></li>
+              <li>Vá em: <strong>Configurações do Canal → Integrações</strong></li>
+              <li>Clique em <strong>"Criar Webhook"</strong></li>
+              <li>Copie a URL e cole no <strong>campo do webhook</strong></li>
+              <li><strong>💡 Os relatórios em PDF chegarão aqui!</strong></li>
+            </ul>
+          </div>
+
+          <div class="tutorial-divider"></div>
+
+          <div class="tutorial-section">
+            <h3>👤 PASSO 3: Configurar Identificação</h3>
+            <ul>
+              <li>Digite seu nome (aparecerá no relatório)</li>
+              <li><strong>Defina QUANTAS CONTAS USA HOJE</strong></li>
+              <li style="margin-left: 20px;">→ Se usar 40 contas/dia → Digite: <strong>40</strong></li>
+              <li style="margin-left: 20px;">→ Se usar 20 contas/dia → Digite: <strong>20</strong></li>
+              <li>Adicione foto de perfil (opcional)</li>
+            </ul>
+          </div>
+
+          <div class="tutorial-divider"></div>
+
+          <div class="tutorial-section">
+            <h3>🚀 PASSO 4: Iniciar Automação</h3>
+            <ul>
+              <li>Clique em <strong>"▶️ Iniciar Automação"</strong></li>
+              <li><strong>RESOLVA O CAPTCHA</strong> quando aparecer</li>
+              <li>O sistema faz o resto automaticamente!</li>
+            </ul>
+          </div>
+
+          <div class="tutorial-divider"></div>
+
+          <div class="tutorial-section">
+            <h3>📊 SISTEMA DE LEVAS (1/6, 2/6... 6/6)</h3>
+            <ul>
+              <li>Cada leva = rodada completa de envios</li>
+              <li>Você faz <strong>6 levas</strong> para completar o ciclo</li>
+            </ul>
+          </div>
+
+          <div class="tutorial-divider"></div>
+
+          <div class="tutorial-section highlight-warning">
+            <h3>⚠️ SE TIVER MAIS DE 20 CONTAS:</h3>
+            <ul>
+              <li>Automação pausa quando terminar 1ª página</li>
+              <li><strong>VÁ PARA PRÓXIMA ABA DE CONTAS</strong></li>
+              <li>Clique <strong>"▶️ Iniciar"</strong> novamente</li>
+              <li>Repita até processar TODAS as contas</li>
+              <li>Só então o relatório será enviado!</li>
+            </ul>
+            <p class="tutorial-tip">
+              💡 O sistema aguarda você completar <strong>TODAS</strong> as contas configuradas antes de enviar o relatório da leva.
+            </p>
+          </div>
+
+          <div class="tutorial-divider"></div>
+
+          <div class="tutorial-section">
+            <h3>✅ QUANDO O RELATÓRIO É ENVIADO?</h3>
+            <ul>
+              <li>Só depois de processar <strong>TODAS</strong> as contas</li>
+              <li>Vai chegar um PDF no webhook do Discord</li>
+              <li>Contém: Estatísticas + Screenshots de erros</li>
+            </ul>
+          </div>
+
+          <div class="tutorial-divider"></div>
+
+          <div class="tutorial-section">
+            <h3>❓ DÚVIDAS COMUNS</h3>
+            <div class="tutorial-faq">
+              <div class="faq-item">
+                <strong>Q: Posso fechar o programa durante automação?</strong>
+                <p>A: Sim! O progresso é salvo automaticamente.</p>
+              </div>
+              <div class="faq-item">
+                <strong>Q: E se a internet cair?</strong>
+                <p>A: Continue de onde parou ao reabrir!</p>
+              </div>
+              <div class="faq-item">
+                <strong>Q: Quanto tempo demora cada leva?</strong>
+                <p>A: Depende das contas, média 10-20 minutos.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="tutorial-divider"></div>
+
+          <div class="tutorial-section highlight-warning">
+            <h3>⚠️ IMPORTANTE: Tempo Entre Levas</h3>
+            <p class="tutorial-tip">
+              ⏰ <strong>RESPEITE O TEMPO CORRETO ENTRE CADA LEVA!</strong><br>
+              Aguarde pelo menos <strong>1-2 horas</strong> entre levas para evitar que o Discord fique lento ou detecte spam. Resolver muitos captchas rapidamente pode causar problemas de desempenho.
+            </p>
+          </div>
+
         </div>
       </div>
     </div>

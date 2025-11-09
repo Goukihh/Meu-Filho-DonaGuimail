@@ -236,12 +236,71 @@ function findAddFriendInput() {
   return { success: false, element: null, method: 'none' };
 }
 
+/**
+ * ALIAS: findUsernameInput → findAddFriendInput
+ * (usado pela função de detecção)
+ */
+function findUsernameInput() {
+  return findAddFriendInput();
+}
+
+/**
+ * Encontra o botão "Send Friend Request"
+ */
+function findSendFriendRequestButton() {
+  console.log('[SELECTORS] Procurando botão Send Friend Request...');
+  
+  const strategies = [
+    {
+      name: 'text exact match',
+      fn: () => {
+        const buttons = Array.from(document.querySelectorAll('button'));
+        return buttons.find(btn => {
+          const text = btn.textContent.trim();
+          return (text === 'Send Friend Request' || text === 'Enviar Pedido de Amizade') && btn.offsetParent !== null;
+        });
+      }
+    },
+    {
+      name: 'type="submit"',
+      fn: () => {
+        const submits = Array.from(document.querySelectorAll('button[type="submit"]'));
+        return submits.find(btn => {
+          const text = btn.textContent.trim().toLowerCase();
+          return (text.includes('send') || text.includes('enviar')) && btn.offsetParent !== null;
+        });
+      }
+    },
+    {
+      name: 'aria-label containing "send"',
+      fn: () => document.querySelector('button[aria-label*="send" i]')
+    }
+  ];
+  
+  for (const strategy of strategies) {
+    try {
+      const element = strategy.fn();
+      if (element && element.offsetParent !== null) {
+        console.log(`[SELECTORS] ✅ Botão Send encontrado via: ${strategy.name}`);
+        return { success: true, element, method: strategy.name };
+      }
+    } catch (error) {
+      console.log(`[SELECTORS] ⚠️ Erro na estratégia ${strategy.name}:`, error.message);
+    }
+  }
+  
+  console.log('[SELECTORS] ❌ Botão Send não encontrado');
+  return { success: false, element: null, method: 'none' };
+}
+
 // Exportar para uso no main.js via executeJavaScript
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     findFriendsSidebar,
     findAddFriendButton,
     findAllTab,
-    findAddFriendInput
+    findAddFriendInput,
+    findUsernameInput,
+    findSendFriendRequestButton
   };
 }

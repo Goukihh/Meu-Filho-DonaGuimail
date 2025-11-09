@@ -3281,6 +3281,31 @@
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
+/* Botões do header (? e X) */
+.header-buttons {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* Botão de Ajuda (?) */
+.help-automation-btn {
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  font-weight: bold;
+}
+
+.help-automation-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(1.1);
+}
+
 .close-automation-btn {
   background: rgba(255, 255, 255, 0.2);
   border: none;
@@ -3617,6 +3642,195 @@
   background: linear-gradient(135deg, #3a9b6f, #2d7a5a);
   transform: translateY(-1px);
   box-shadow: 0 4px 8px rgba(67, 181, 129, 0.4);
+}
+
+/* ===== MODAL TUTORIAL DE AUTOMAÇÃO ===== */
+.tutorial-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 10000;
+  backdrop-filter: blur(5px);
+}
+
+.tutorial-content {
+  background: var(--bg-dark);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 700px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.tutorial-header {
+  background: var(--sunset-gradient);
+  padding: 20px 25px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 107, 53, 0.3);
+}
+
+.tutorial-header h2 {
+  color: #ffffff;
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.close-tutorial-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: #ffffff;
+  font-size: 28px;
+  cursor: pointer;
+  padding: 5px 12px;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(10px);
+  line-height: 1;
+}
+
+.close-tutorial-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
+.tutorial-body {
+  padding: 25px 30px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.tutorial-section {
+  margin-bottom: 25px;
+}
+
+.tutorial-section h3 {
+  color: var(--gragas-orange);
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tutorial-section ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.tutorial-section ul li {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.8;
+  padding-left: 20px;
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.tutorial-section ul li:before {
+  content: "•";
+  color: var(--gragas-orange);
+  font-weight: bold;
+  position: absolute;
+  left: 0;
+}
+
+.tutorial-section ul li strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.tutorial-divider {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 107, 53, 0.3) 50%,
+    transparent 100%
+  );
+  margin: 20px 0;
+}
+
+.tutorial-section.highlight-warning {
+  background: rgba(255, 107, 53, 0.1);
+  padding: 15px;
+  border-radius: 8px;
+  border-left: 3px solid var(--gragas-orange);
+}
+
+.tutorial-tip {
+  background: rgba(255, 107, 53, 0.15);
+  padding: 10px 15px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-top: 10px;
+  line-height: 1.6;
+}
+
+.tutorial-tip strong {
+  color: var(--gragas-orange);
+}
+
+.tutorial-faq {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.faq-item {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 12px 15px;
+  border-radius: 8px;
+  border-left: 3px solid var(--gragas-orange);
+}
+
+.faq-item strong {
+  color: var(--text-primary);
+  font-size: 14px;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.faq-item p {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* Scrollbar do tutorial */
+.tutorial-body::-webkit-scrollbar {
+  width: 8px;
+  display: block !important;
+}
+
+.tutorial-body::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+
+.tutorial-body::-webkit-scrollbar-thumb {
+  background: var(--gragas-orange);
+  border-radius: 4px;
+}
+
+.tutorial-body::-webkit-scrollbar-thumb:hover {
+  background: var(--gragas-warm);
 }
 
 /* Responsividade */

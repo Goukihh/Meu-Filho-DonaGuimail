@@ -1,5 +1,3 @@
-console.log('[RENDERER] Arquivo carregado');
-
 // Sistema de logs condicional
 const isDev = false;
 const log = isDev ? console.log : () => {};
@@ -1381,10 +1379,10 @@ function restoreAddAccountModal() {
   setupModalForAdd();
 }
 
-// Função para verificar atualizações
+// Função para verificar atualizações (manual - clique no botão)
 async function checkForUpdates() {
   try {
-    console.log('🔍 Verificando atualizações...');
+    console.log('🔍 Verificando atualizações (manual)...');
 
     // Fechar BrowserView para evitar sobreposição
     console.log('🔍 Fechando BrowserView para verificação de atualizações');
@@ -1396,6 +1394,13 @@ async function checkForUpdates() {
 
     const updateInfo = await window.electron.invoke('check-updates');
 
+    // ✅ VALIDAÇÃO: Verificar se updateInfo existe e é válido
+    if (!updateInfo) {
+      console.error('❌ Resposta vazia da verificação de atualizações');
+      showErrorState('Não foi possível verificar atualizações. Tente novamente mais tarde.');
+      return;
+    }
+
     if (updateInfo.error) {
       console.error('❌ Erro ao verificar atualizações:', updateInfo.error);
       showErrorState(updateInfo.error);
@@ -1406,12 +1411,58 @@ async function checkForUpdates() {
       console.log(`📦 Atualização disponível: ${updateInfo.latestVersion}`);
       showUpdateState(updateInfo);
     } else {
-      console.log('✅ Aplicativo atualizado');
+      console.log('✅ Aplicativo atualizado - chamando showNoUpdateState()');
       showNoUpdateState();
     }
   } catch (error) {
     console.error('❌ Erro ao verificar atualizações:', error);
-    showErrorState(error.message);
+    showErrorState(error.message || 'Erro desconhecido ao verificar atualizações');
+  }
+}
+
+// Função para verificar atualizações automaticamente (ao abrir o app)
+async function checkForUpdatesAutomatic() {
+  try {
+    console.log('🔍 Verificando atualizações automaticamente (background)...');
+
+    // ✅ Verificar se elementos necessários existem
+    if (!updateTab) {
+      console.error('❌ updateTab não encontrado - abortando verificação automática');
+      return;
+    }
+
+    // ✅ NÃO fecha BrowserView
+    // ✅ NÃO mostra aba de verificação
+    // ✅ Verificação silenciosa em background
+
+    const updateInfo = await window.electron.invoke('check-updates');
+
+    if (updateInfo.error) {
+      console.log('⚠️ Erro ao verificar atualizações (silencioso):', updateInfo.error);
+      // ❌ NÃO mostra erro para o usuário
+      return;
+    }
+
+    if (updateInfo.hasUpdate) {
+      console.log(`📦 Nova atualização encontrada: ${updateInfo.latestVersion}`);
+      
+      // ✅ SÓ MOSTRA SE TIVER ATUALIZAÇÃO!
+      // Fechar BrowserView para evitar sobreposição
+      window.electron.send('close-browser-view-for-add');
+      
+      // Mostrar aba de atualização
+      updateTab.classList.add('show');
+      
+      // Mostrar diretamente o estado de atualização disponível
+      showUpdateState(updateInfo);
+    } else {
+      console.log('✅ Aplicativo já está atualizado (verificação automática)');
+      // ❌ NÃO mostra mensagem "Nenhuma atualização encontrada"
+      // ✅ App continua normalmente
+    }
+  } catch (error) {
+    console.log('⚠️ Erro ao verificar atualizações (silencioso):', error);
+    // ❌ NÃO mostra erro para o usuário
   }
 }
 
@@ -3262,6 +3313,7 @@ if (window.electron && window.electron.ipcRenderer) {
   window.electron.ipcRenderer.on('automation-leva-completed', (data) => {
     if (data.stats) {
       const statNicksLoaded = document.getElementById('stat-nicks-loaded');
+      const statNicksRemaining = document.getElementById('stat-nicks-remaining');
       const statAccountsVisible = document.getElementById('stat-accounts-visible');
       const statTotalInvites = document.getElementById('stat-total-invites');
       const statRate = document.getElementById('stat-rate');
@@ -3271,6 +3323,7 @@ if (window.electron && window.electron.ipcRenderer) {
       const statErrors = document.getElementById('stat-errors');
       
       if (statNicksLoaded) statNicksLoaded.textContent = data.stats.nicksLoaded || '-';
+      if (statNicksRemaining) statNicksRemaining.textContent = data.stats.nicksRemaining || '-';
       if (statAccountsVisible) statAccountsVisible.textContent = data.stats.accountsVisible || '-';
       if (statTotalInvites) statTotalInvites.textContent = data.stats.totalInvites || '-';
       if (statRate) statRate.textContent = `${data.stats.rate}/min`;
@@ -3278,6 +3331,24 @@ if (window.electron && window.electron.ipcRenderer) {
       if (statSuccessRate) statSuccessRate.textContent = `${data.stats.successRate}%`;
       if (statSuccessful) statSuccessful.textContent = data.stats.successCount;
       if (statErrors) statErrors.textContent = data.stats.errorCount;
+    }
+  });
+
+  // ✅ Handler para erros de automação (ex: campo obrigatório não preenchido)
+  window.electron.ipcRenderer.on('automation-error', (data) => {
+    console.error('❌ Erro de automação:', data);
+    
+    // Mostrar notificação
+    showNotification(`❌ ${data.message}`, 'error');
+    
+    // Adicionar log se existir
+    const logContainer = document.getElementById('automation-log');
+    if (logContainer) {
+      const logEntry = document.createElement('div');
+      logEntry.className = 'log-entry error';
+      logEntry.innerHTML = `<strong>❌ ${data.message}</strong>${data.details ? '<br>' + data.details : ''}`;
+      logContainer.appendChild(logEntry);
+      logContainer.scrollTop = logContainer.scrollHeight;
     }
   });
 }
@@ -3303,6 +3374,23 @@ document.addEventListener('DOMContentLoaded', () => {
   } else {
     console.error('❌ Erro ao inicializar dialogs customizados');
   }
+
+  // ✅ VERIFICAR ATUALIZAÇÕES AUTOMATICAMENTE AO ABRIR O APP
+  console.log('🚀 Iniciando verificação automática de atualizações...');
+  
+  // Aguardar 3 segundos após o app abrir para garantir que tudo carregou completamente
+  setTimeout(() => {
+    // Verificar se os elementos necessários existem antes de verificar atualizações
+    const updateTabElement = document.getElementById('update-tab');
+    
+    if (!updateTabElement) {
+      console.error('❌ Elemento update-tab não encontrado - pulando verificação automática');
+      return;
+    }
+    
+    console.log('✅ Elementos carregados - iniciando verificação automática');
+    checkForUpdatesAutomatic();
+  }, 3000); // 3 segundos de cooldown
 });
 
 // Função para mostrar dialog de remover conta
@@ -3739,13 +3827,27 @@ if (startAutomationBtn) {
           return;
         }
 
+        // ✅ Verificar se Contas Diárias foi configurada
+        const totalAccountsInput = document.getElementById('total-accounts');
+        const dailyAccounts = totalAccountsInput?.value?.trim();
+        if (!dailyAccounts || parseInt(dailyAccounts) <= 0) {
+          showNotification('❌ Configure quantas contas você usa diariamente antes de iniciar a automação!', 'error');
+          // Focar no campo para usuário preencher
+          if (totalAccountsInput) {
+            totalAccountsInput.focus();
+            totalAccountsInput.style.border = '2px solid #ff4444';
+            setTimeout(() => {
+              totalAccountsInput.style.border = '';
+            }, 3000);
+          }
+          return;
+        }
+
         // Obter IDs das contas visíveis na página atual
         const visibleAccountIds = getVisibleAccountIds();
         console.log(`👁️ Contas visíveis: ${visibleAccountIds.length}`);
 
         const config = {
-          delayMin: parseFloat(document.getElementById('delay-min')?.value || 0.5) * 1000,
-          delayMax: parseFloat(document.getElementById('delay-max')?.value || 1.5) * 1000,
           accountIds: visibleAccountIds, // IDs das contas visíveis
         };
 
@@ -4148,6 +4250,48 @@ if (updateTab) {
       updateTab.classList.remove('show');
       // Restaurar BrowserView após fechar aba de atualização
       window.electron.send('context-menu-closed');
+    }
+  });
+}
+
+// ===== TUTORIAL DE AUTOMAÇÃO =====
+const helpAutomationBtn = document.getElementById('help-automation-btn');
+const tutorialModal = document.getElementById('tutorial-modal');
+const closeTutorialBtn = document.getElementById('close-tutorial-btn');
+
+// Função para mostrar tutorial
+function showTutorialModal() {
+  if (tutorialModal) {
+    tutorialModal.style.display = 'flex';
+  }
+}
+
+// Função para fechar tutorial
+function closeTutorialModal() {
+  if (tutorialModal) {
+    tutorialModal.style.display = 'none';
+  }
+}
+
+// Botão "?" no header
+if (helpAutomationBtn) {
+  helpAutomationBtn.addEventListener('click', () => {
+    showTutorialModal();
+  });
+}
+
+// Botão "X" no modal
+if (closeTutorialBtn) {
+  closeTutorialBtn.addEventListener('click', () => {
+    closeTutorialModal();
+  });
+}
+
+// Fechar ao clicar fora do modal
+if (tutorialModal) {
+  tutorialModal.addEventListener('click', (e) => {
+    if (e.target === tutorialModal) {
+      closeTutorialModal();
     }
   });
 }

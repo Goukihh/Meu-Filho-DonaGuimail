@@ -1,5 +1,4 @@
 // Script de stealth (compatível com Discord)
-console.log('Stealth carregando...');
 
 // Mascarar webdriver
 Object.defineProperty(navigator, 'webdriver', {
@@ -395,7 +394,6 @@ try {
       // Bloquear data channels
       const originalCreateDataChannel = pc.createDataChannel;
       pc.createDataChannel = function () {
-        console.log('WebRTC data channel bloqueado');
         return null;
       };
       return pc;
@@ -482,16 +480,4 @@ try {
   // Ignorado
 }
 
-console.log('Mascaramento aplicado (24+ proteções)');
-console.log('Propriedades protegidas:');
-console.log('   - navigator.webdriver:', navigator.webdriver);
-console.log('   - window.chrome:', typeof window.chrome);
-console.log('   - navigator.plugins.length:', navigator.plugins.length);
-console.log('   - navigator.languages:', navigator.languages);
-console.log('   - navigator.userAgentData:', !!navigator.userAgentData);
-console.log('   - window.electron:', typeof window.electron);
-console.log('   - Canvas fingerprinting: Protegido');
-console.log('   - Audio fingerprinting: Protegido');
-console.log('   - WebRTC leak: Bloqueado');
-console.log('   - Font fingerprinting: Normalizado');
-console.log('   - Total de proteções: 24+');
+// Stealth aplicado silenciosamente (logs removidos para produção)

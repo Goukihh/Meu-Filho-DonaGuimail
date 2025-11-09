@@ -13,7 +13,7 @@ const path = require('path');
  * Salva JSON de forma async com backup automático
  */
 async function saveJSON(filePath, data, options = {}) {
-  const { createBackup = true, validate = true } = options;
+  const { createBackup = true, validate = true, keepHistory = false } = options;
   
   try {
     // Validar dados antes de salvar
@@ -21,8 +21,34 @@ async function saveJSON(filePath, data, options = {}) {
       throw new Error('Dados inválidos: esperado objeto ou array');
     }
     
-    // Criar backup se arquivo existir
+    // 🔒 PROTEÇÃO: Se arquivo existente tem mais dados que o novo, criar backup com timestamp
     if (createBackup && fsSync.existsSync(filePath)) {
+      const existingContent = fsSync.readFileSync(filePath, 'utf8');
+      let needsTimestampBackup = false;
+      
+      try {
+        const existingData = JSON.parse(existingContent);
+        // Se arquivo existente tem mais itens, é suspeito - criar backup com timestamp
+        if (Array.isArray(existingData) && Array.isArray(data)) {
+          if (existingData.length > data.length && existingData.length > 3) {
+            needsTimestampBackup = true;
+            console.warn(`⚠️ ATENÇÃO: Tentando salvar ${data.length} itens sobre arquivo com ${existingData.length} itens!`);
+          }
+        }
+      } catch (e) {
+        // Se não conseguir ler arquivo existente, criar backup por segurança
+        needsTimestampBackup = true;
+      }
+      
+      // Criar backup com timestamp se necessário
+      if (needsTimestampBackup || keepHistory) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const backupPath = `${filePath}.backup-${timestamp}`;
+        await fs.copyFile(filePath, backupPath);
+        console.log(`💾 Backup de segurança criado: ${path.basename(backupPath)}`);
+      }
+      
+      // Criar backup temporário normal também
       const backupPath = `${filePath}.backup`;
       await fs.copyFile(filePath, backupPath);
     }
@@ -40,7 +66,7 @@ async function saveJSON(filePath, data, options = {}) {
       }
     }
     
-    // Remover backup se tudo deu certo
+    // Remover backup temporário se tudo deu certo
     if (createBackup && fsSync.existsSync(`${filePath}.backup`)) {
       await fs.unlink(`${filePath}.backup`);
     }
