@@ -1594,21 +1594,36 @@ function showToast(message, type = 'info', duration = 3000) {
   if (existingToast) {
     existingToast.remove();
   }
-
-  // Criar novo toast
+  // Criar novo toast que é removido ao passar o mouse por cima
   const toast = document.createElement('div');
   toast.className = `toast-notification ${type}`;
-  toast.textContent = message;
 
+  const msg = document.createElement('div');
+  msg.className = 'toast-message';
+  msg.textContent = message;
+
+  toast.appendChild(msg);
   document.body.appendChild(toast);
 
-  // Auto-remover após duração
-  setTimeout(() => {
+  // Auto-remover após duração (salvar id para poder cancelar)
+  const autoRemoveId = setTimeout(() => {
     if (toast.parentNode) {
       toast.style.animation = 'slideInRight 0.3s ease reverse';
       setTimeout(() => toast.remove(), 300);
     }
   }, duration);
+
+  // Hover-to-dismiss com animação: aplicar fade/slide e remover após a transição
+  toast.addEventListener('mouseenter', () => {
+    clearTimeout(autoRemoveId);
+    // aplicar animação de saída
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(100%)';
+    // remover após 300ms (igual ao tempo da transição)
+    setTimeout(() => {
+      if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, 300);
+  });
 }
 
 // Sistema de Loading Overlay
@@ -2007,7 +2022,13 @@ function showNotification(message, type = 'info', duration = 3000) {
   // Criar elemento de notificação
   const notification = document.createElement('div');
   notification.className = `notification notification-${type}`;
-  notification.textContent = message;
+
+  // Conteúdo com mensagem (hover para descartar)
+  const content = document.createElement('div');
+  content.className = 'notification-content';
+  content.textContent = message;
+
+  notification.appendChild(content);
 
   // Estilos da notificação
   notification.style.cssText = `
@@ -2042,8 +2063,8 @@ function showNotification(message, type = 'info', duration = 3000) {
     notification.style.transform = 'translateX(0)';
   }, 100);
 
-  // Remover após a duração especificada
-  setTimeout(() => {
+  // Remover após a duração especificada (guardar id para cancelar se fechado por hover)
+  const autoHideId = setTimeout(() => {
     notification.style.transform = 'translateX(100%)';
     setTimeout(() => {
       if (notification.parentNode) {
@@ -2051,6 +2072,16 @@ function showNotification(message, type = 'info', duration = 3000) {
       }
     }, 300);
   }, duration);
+
+  // Hover-to-dismiss com animação: aplicar fade/slide e remover após a transição
+  notification.addEventListener('mouseenter', () => {
+    clearTimeout(autoHideId);
+    notification.style.opacity = '0';
+    notification.style.transform = 'translateX(100%)';
+    setTimeout(() => {
+      if (notification.parentNode) notification.parentNode.removeChild(notification);
+    }, 300);
+  });
 }
 
 // Event listeners para backup/restaurar
@@ -3718,9 +3749,6 @@ if (closeAutomationBtn) {
 
       // Restaurar BrowserView (igual aos outros botões)
       window.electron.send('context-menu-closed');
-
-      // Retomar automação se estava pausada pelo painel
-      await window.electron.automation.panelClosed();
     }
   });
 }
@@ -3859,7 +3887,6 @@ if (startAutomationBtn) {
         if (result.success) {
           // Mostrar botões de controle
           if (startAutomationBtn) startAutomationBtn.style.display = 'none';
-          if (pauseAutomationBtn) pauseAutomationBtn.style.display = 'inline-block';
           if (stopAutomationBtn) stopAutomationBtn.style.display = 'inline-block';
 
           // Adicionar log
@@ -3887,37 +3914,7 @@ if (startAutomationBtn) {
   console.log('❌ Botão de iniciar NÃO encontrado!');
 }
 
-// Botão Pausar Automação
-if (pauseAutomationBtn) {
-  pauseAutomationBtn.addEventListener('click', async () => {
-    console.log('⏸️ Pausando automação...');
-
-    try {
-      if (window.electron && window.electron.automation) {
-        const result = await window.electron.automation.pause();
-        console.log('📋 Resultado:', result);
-
-        if (result.success) {
-          // Mostrar botão de iniciar
-          startAutomationBtn.style.display = 'inline-block';
-          pauseAutomationBtn.style.display = 'none';
-
-          // Adicionar log
-          const logContainer = document.getElementById('automation-log');
-          if (logContainer) {
-            const logEntry = document.createElement('div');
-            logEntry.className = 'log-entry warning';
-            logEntry.textContent = '⏸️ Automação pausada';
-            logContainer.appendChild(logEntry);
-            logContainer.scrollTop = logContainer.scrollHeight;
-          }
-        }
-      }
-    } catch (error) {
-      console.error('❌ Erro ao pausar automação:', error);
-    }
-  });
-}
+// NOTE: The Pause control was intentionally removed - pause flow is no longer supported.
 
 // Botão Parar Automação
 if (stopAutomationBtn) {
@@ -3931,9 +3928,9 @@ if (stopAutomationBtn) {
 
         if (result.success) {
           // Mostrar botão de iniciar
-          startAutomationBtn.style.display = 'inline-block';
-          pauseAutomationBtn.style.display = 'none';
-          stopAutomationBtn.style.display = 'none';
+          if (startAutomationBtn) startAutomationBtn.style.display = 'inline-block';
+          if (pauseAutomationBtn) pauseAutomationBtn.style.display = 'none';
+          if (stopAutomationBtn) stopAutomationBtn.style.display = 'none';
 
           // Adicionar log
           const logContainer = document.getElementById('automation-log');

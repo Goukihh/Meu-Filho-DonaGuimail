@@ -67,8 +67,382 @@ function automationLog(message, type = 'info') {
   }
 }
 
+// Global crash handlers: capturar erros não tratados e rejeições de Promise
+process.on('uncaughtException', (err) => handleCrash('uncaughtException', err));
+process.on('unhandledRejection', (reason) => handleCrash('unhandledRejection', reason));
+
+function handleCrash(type, err) {
+  try {
+    const userData = (app && app.getPath) ? app.getPath('userData') : path.join(__dirname, '..');
+    const logsDir = path.join(userData, 'logs');
+    if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+    const filename = path.join(logsDir, `crash-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
+    const stack = err && err.stack ? err.stack : String(err);
+    fs.writeFileSync(filename, `[${type}] ${new Date().toISOString()}\n${stack}\n`, 'utf8');
+    logError(`Captured ${type} -> saved to ${filename}`);
+
+    // Tentar notificar o usuário de forma amigável
+    try {
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('show-user-error', { title: 'Erro interno', message: 'O aplicativo encontrou um erro e salvou um relatório automático. Reinicie o app.' });
+      } else {
+        dialog.showErrorBox('Erro interno', 'O aplicativo encontrou um erro e salvou relatório em logs. Reinicie o app.');
+      }
+    } catch (e) {
+      void 0; // ignorar falha ao notificar o usuário
+    }
+  } catch (e) {
+    try { console.error('Failed to write crash log:', e); } catch (ignore) { void 0; }
+  }
+}
+
+
 // Usar pasta de dados do usuário para persistência permanente
 const userDataPath = app.getPath('userData');
+
+function validateAndRestoreCriticalFile(filePath, minLength = 10) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const data = fs.readFileSync(filePath, 'utf8');
+    if (data.trim().length < minLength || data.trim() === '' || data.trim() === '[]' || data.trim() === '{}') {
+      logWarn(`Arquivo crítico ${filePath} está vazio ou corrompido. Tentando restaurar backup...`);
+      const dir = path.dirname(filePath);
+      const baseName = path.basename(filePath);
+      const backups = fs.readdirSync(dir).filter(f => f.startsWith(baseName + '.backup'));
+      backups.sort((a, b) => fs.statSync(path.join(dir, b)).mtimeMs - fs.statSync(path.join(dir, a)).mtimeMs);
+      for (const backup of backups) {
+        const backupPath = path.join(dir, backup);
+        const backupData = fs.readFileSync(backupPath, 'utf8');
+        if (backupData.trim().length >= minLength) {
+          fs.copyFileSync(backupPath, filePath);
+          logWarn(`Restaurado ${filePath} do backup: ${backupPath}`);
+          return;
+        }
+      }
+      logError(`Nenhum backup válido encontrado para ${filePath}`);
+    }
+  } catch (e) {
+    logError(`Erro ao validar/restaurar ${filePath}:`, e);
+  }
+}
+
+const automationProgressPath = path.join(userDataPath, 'automation-progress.json');
+// Estrutura de progresso unificada (permitir futuros campos sem quebrar)
+let automationProgress = {
+  currentNickIndex: 0,
+  totalInvitesSent: 0,
+  lastUpdate: null,
+  webhookUrl: null,
+  currentCiclo: 0,
+  currentAccountIndex: 0,
+};
+
+// Carrega progresso e faz merge com defaults para compatibilidade com formatos antigos
+function loadAutomationProgress() {
+  if (fs.existsSync(automationProgressPath)) {
+    try {
+      const data = fs.readFileSync(automationProgressPath, 'utf8');
+      const obj = JSON.parse(data);
+      if (obj && typeof obj === 'object') {
+        automationProgress = Object.assign({}, automationProgress, obj);
+        // Garantir que currentNickIndex seja número
+        if (typeof automationProgress.currentNickIndex !== 'number') automationProgress.currentNickIndex = 0;
+        if (typeof automationProgress.totalInvitesSent !== 'number') automationProgress.totalInvitesSent = 0;
+        if (typeof automationProgress.currentCiclo !== 'number') automationProgress.currentCiclo = 0;
+        if (typeof automationProgress.currentAccountIndex !== 'number') automationProgress.currentAccountIndex = 0;
+      }
+    } catch (e) {
+      logWarn('Erro ao carregar automation-progress.json:', e);
+    }
+  }
+}
+
+// Fila de gravação para serializar writes do progresso
+let progressWriteQueue = Promise.resolve();
+
+// Função unificada e atômica para salvar progresso
+async function saveProgress() {
+  // Atualizar timestamp
+  automationProgress.lastUpdate = new Date().toISOString();
+
+  const progressToSave = Object.assign({}, automationProgress);
+
+  const op = (async () => {
+    try {
+      await fileOps.saveJSON(automationProgressPath, progressToSave, {
+        createBackup: true,
+        validate: true,
+        atomic: SAFE_ATOMIC_WRITES,
+      });
+      log(`💾 Progresso salvo: ${JSON.stringify({ currentNickIndex: progressToSave.currentNickIndex, totalInvitesSent: progressToSave.totalInvitesSent })}`);
+    } catch (e) {
+      logWarn('Erro ao salvar progresso de forma atômica:', e.message || e);
+      // Tentar fallback simples (não-atômico)
+      try {
+        fs.writeFileSync(automationProgressPath, JSON.stringify(progressToSave, null, 2), 'utf8');
+        log('💾 Progresso salvo com fallback não-atômico');
+      } catch (err) {
+        logError('❌ Falha ao salvar progresso (fallback):', err);
+      }
+    }
+  })();
+
+  // Serializar gravações
+  progressWriteQueue = progressWriteQueue.then(() => op).catch(() => op);
+  return op;
+}
+
+// Compat shim para manter chamadas existentes
+function saveAutomationProgress() {
+  // Não bloquear: dispara gravação assincronamente e registra erros
+  saveProgress().catch(e => logWarn('saveAutomationProgress erro:', e));
+}
+
+const usedNicksPath = path.join(userDataPath, 'used-nicks.json');
+// Limite para evitar que used-nicks cresça indefinidamente
+const USED_NICKS_MAX = 1000; // quando exceder, vamos podar
+const USED_NICKS_KEEP = 1;   // quantos últimos manter (1 = apenas o último)
+
+let usedNicksSet = new Set();
+
+function loadUsedNicks() {
+  if (fs.existsSync(usedNicksPath)) {
+    try {
+      const data = fs.readFileSync(usedNicksPath, 'utf8');
+      const arr = JSON.parse(data);
+      if (Array.isArray(arr)) {
+        usedNicksSet = new Set(arr);
+      }
+    } catch (e) {
+      logWarn('Erro ao carregar used-nicks.json:', e);
+    }
+  }
+}
+
+function pruneUsedNicksIfNeeded(latestNick) {
+  try {
+    if (usedNicksSet.size > USED_NICKS_MAX) {
+      // Manter apenas os últimos N (em ordem de inserção)
+      const keep = Array.from(usedNicksSet).slice(-USED_NICKS_KEEP);
+      // Garantir que o latestNick esteja incluído (por segurança)
+      if (latestNick && !keep.includes(latestNick)) {
+        keep.push(latestNick);
+        // manter apenas últimos USED_NICKS_KEEP se necessário
+        if (keep.length > USED_NICKS_KEEP) {
+          keep.splice(0, keep.length - USED_NICKS_KEEP);
+        }
+      }
+      usedNicksSet = new Set(keep);
+      log(`🧹 used-nicks podado para ${usedNicksSet.size} entradas (limite ${USED_NICKS_MAX})`);
+    }
+  } catch (e) {
+    // Não bloquear a gravação se a poda falhar
+    logWarn('Falha ao podar used-nicks:', e);
+  }
+}
+
+function saveUsedNick(nick) {
+  usedNicksSet.add(nick);
+  // Poda se necessário antes de persistir
+  pruneUsedNicksIfNeeded(nick);
+
+  // Gravação assíncrona não-bloqueante; fallback assíncrono também para evitar bloquear o main thread
+  (async () => {
+    try {
+      await fileOps.saveJSON(usedNicksPath, Array.from(usedNicksSet), {
+        createBackup: true,
+        validate: true,
+        atomic: SAFE_ATOMIC_WRITES,
+      });
+    } catch (e) {
+      logWarn('Erro ao salvar used-nicks.json (async):', e && e.message ? e.message : e);
+      try {
+        // Fallback assíncrono simples
+        await fileOps.writeText(usedNicksPath, JSON.stringify(Array.from(usedNicksSet), null, 2));
+      } catch (err) {
+        logWarn('Erro no fallback assíncrono ao salvar used-nicks:', err && err.message ? err.message : err);
+      }
+    }
+  })();
+}
+// --- NOVA LÓGICA DE NICKS ---
+const loadedNicksPath = path.join(userDataPath, 'loaded-nicks.json');
+let loadedNicksList = [];
+
+function loadLoadedNicks() {
+  if (fs.existsSync(loadedNicksPath)) {
+    try {
+      const data = fs.readFileSync(loadedNicksPath, 'utf8');
+      const obj = JSON.parse(data);
+      if (Array.isArray(obj.nicks)) {
+        loadedNicksList = obj.nicks;
+      }
+    } catch (e) {
+      logWarn('Erro ao carregar loaded-nicks.json:', e);
+    }
+  }
+}
+
+function saveLoadedNicks() {
+  // Serializar gravações para evitar race conditions entre writers
+  if (!global.loadedNicksWriteQueue) global.loadedNicksWriteQueue = Promise.resolve();
+
+  const payload = { nicks: loadedNicksList };
+
+  const op = (async () => {
+    try {
+      // Tentar escrever de forma atômica via fileOps
+      await fileOps.saveJSON(loadedNicksPath, payload, {
+        createBackup: true,
+        validate: true,
+        atomic: SAFE_ATOMIC_WRITES,
+      });
+      console.log(`[DEBUG] saved loaded-nicks.json (${loadedNicksList.length} nicks)`);
+    } catch (err) {
+      logWarn('Erro ao salvar loaded-nicks.json de forma atômica:', err && err.message ? err.message : err);
+      // Fallback síncrono para garantir persistência em caso de falha
+      try {
+        fs.writeFileSync(loadedNicksPath, JSON.stringify(payload, null, 2), 'utf8');
+        console.log(`[DEBUG] saved loaded-nicks.json (fallback sync) (${loadedNicksList.length} nicks)`);
+      } catch (e) {
+        logError('Erro ao salvar loaded-nicks.json (fallback):', e);
+      }
+    }
+  })();
+
+  // Encadear na fila global para serializar
+  global.loadedNicksWriteQueue = global.loadedNicksWriteQueue.then(() => op).catch(() => op);
+  return op;
+}
+
+function getNextNick() {
+  if (loadedNicksList.length === 0) return null;
+  // Pega o primeiro nick disponível
+  return loadedNicksList[0];
+}
+
+// Atomically claim and remove the next nick from the persisted list.
+// This guarantees that once a nick is handed out it is removed from disk
+// and recorded in used-nicks, preventing duplicates even across restarts.
+async function claimNextNick() {
+  if (loadedNicksList.length === 0) return null;
+  const nick = loadedNicksList.shift();
+
+  // Persist the updated loaded-nicks list
+  await saveLoadedNicks();
+
+  // Mark as used and persist used-nicks atomically
+  try {
+    if (!usedNicksSet.has(nick)) {
+      usedNicksSet.add(nick);
+      // Podar se exceder limite (mantém only latest)
+      pruneUsedNicksIfNeeded(nick);
+      // Use fileOps for atomic write
+      await fileOps.saveJSON(usedNicksPath, Array.from(usedNicksSet), {
+        createBackup: true,
+        validate: true,
+        atomic: SAFE_ATOMIC_WRITES,
+      });
+    }
+  } catch (e) {
+    // Fallback to sync write if atomic fails
+    try {
+      fs.writeFileSync(usedNicksPath, JSON.stringify(Array.from(usedNicksSet), null, 2), 'utf8');
+    } catch (err) {
+      logWarn('Erro ao persistir used-nicks após claimNextNick:', err);
+    }
+  }
+
+  // Sync engine in-memory list
+  if (automationEngine && Array.isArray(automationEngine.nicksList)) {
+    automationEngine.nicksList = [...loadedNicksList];
+  }
+
+  console.log(`[DEBUG] claimNextNick -> ${nick}`);
+  return nick;
+}
+
+function useNick(nick) {
+  // Non-blocking async worker so callers don't need to await.
+  (async () => {
+    // If the nick is already marked used, bail out early
+    if (usedNicksSet.has(nick)) {
+      logWarn(`Tentou usar nick já marcado como usado: ${nick}`);
+      return;
+    }
+
+    const idx = loadedNicksList.indexOf(nick);
+    if (idx === -1) {
+      logWarn(`Tentou usar nick inexistente: ${nick}`);
+      console.warn(`[DEBUG] Tentou remover nick inexistente: ${nick}`);
+      return;
+    }
+
+    // Remove from in-memory list
+    loadedNicksList.splice(idx, 1);
+
+    // Persist loaded-nicks atomically (serialized)
+    try {
+      await saveLoadedNicks();
+    } catch (e) {
+      logWarn('Erro ao persistir loaded-nicks após remoção:', e);
+    }
+
+    // Ajustar ponteiro de progresso se necessário para evitar pular o próximo nick
+    try {
+      if (typeof automationProgress === 'object' && typeof automationProgress.currentNickIndex === 'number') {
+        if (automationProgress.currentNickIndex > idx) {
+          automationProgress.currentNickIndex = Math.max(0, automationProgress.currentNickIndex - 1);
+          await saveProgress();
+        }
+      }
+    } catch (e) {
+      logWarn('Erro ao ajustar automationProgress após remoção de nick:', e);
+    }
+
+    // Registrar e garantir que nick usado seja marcado em used-nicks (persistir atômico)
+    try {
+      if (!usedNicksSet.has(nick)) {
+        usedNicksSet.add(nick);
+        // Podar se exceder limite (mantém only latest)
+        pruneUsedNicksIfNeeded(nick);
+        // persist used-nicks
+        try {
+          await fileOps.saveJSON(usedNicksPath, Array.from(usedNicksSet), {
+            createBackup: true,
+            validate: true,
+            atomic: SAFE_ATOMIC_WRITES,
+          });
+        } catch (err) {
+          // fallback
+          try {
+            fs.writeFileSync(usedNicksPath, JSON.stringify(Array.from(usedNicksSet), null, 2), 'utf8');
+          } catch (ee) {
+            logWarn('Erro ao persistir used-nicks (fallback):', ee);
+          }
+        }
+      }
+    } catch (e) {
+      logWarn('Erro ao marcar nick como usado:', e);
+    }
+
+    // Atualizar engine em memória
+    if (automationEngine && Array.isArray(automationEngine.nicksList)) {
+      automationEngine.nicksList = [...loadedNicksList];
+    }
+
+    log(`Nick usado e removido: ${nick}`);
+    console.log(`[DEBUG] Nick removido da lista: ${nick}`);
+    console.log(`[DEBUG] Lista atual de nicks:`, loadedNicksList.slice(0,5));
+  })().catch(e => logWarn('useNick worker erro:', e));
+
+}
+
+// Chamar loadLoadedNicks() na inicialização do app
+loadLoadedNicks();
+
+// ...existing code...
+// Removido sistema antigo de log/set de nicks usados
 const accountsFilePath = path.join(userDataPath, 'accounts.json');
 const progressFilePath = path.join(userDataPath, 'automation-progress.json');
 const statsFilePath = path.join(userDataPath, 'automation-stats.json');
@@ -224,6 +598,150 @@ let errorScreenshots = []; // [ { accountName, targetNick, errorType, screenshot
 let screenshotsDir = path.join(userDataPath, 'screenshots-temp');
 
 // Carregar lista de nicks do arquivo
+validateAndRestoreCriticalFile(accountsFilePath, 50); // Exige pelo menos 50 caracteres para accounts.json
+validateAndRestoreCriticalFile(usedNicksPath, 5); // Exige pelo menos 5 caracteres para used-nicks.json
+validateAndRestoreCriticalFile(progressFilePath, 5); // Exige pelo menos 5 caracteres para automation-progress.json
+
+// ====== BACKUP E RESTAURAÇÃO DE ACCOUNTS.JSON ======
+function createAccountsBackup() {
+  try {
+    const accountsPath = accountsFilePath;
+    const backupDir = path.join(userDataPath, 'backups');
+    if (!fs.existsSync(backupDir)) {
+      fs.mkdirSync(backupDir, { recursive: true });
+    }
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = path.join(backupDir, `accounts_backup_${timestamp}.json`);
+    if (fs.existsSync(accountsPath)) {
+      fs.copyFileSync(accountsPath, backupPath);
+      log(`Backup criado: ${backupPath}`);
+    } else {
+      logWarn('Arquivo accounts.json não encontrado para backup.');
+    }
+  } catch (error) {
+    logError('Erro ao criar backup:', error);
+  }
+}
+
+// Criar backup com rotação (manter apenas `maxKeep` backups)
+function createAccountsBackupWithRotation(maxKeep = 10) {
+  try {
+    const backupPath = (function() {
+      try {
+        createAccountsBackup();
+        return true;
+      } catch (e) {
+        return false;
+      }
+    })();
+
+    const backupDir = path.join(userDataPath, 'backups');
+    if (!fs.existsSync(backupDir)) return;
+
+    const files = fs.readdirSync(backupDir)
+      .filter(f => f.startsWith('accounts_backup_') && f.endsWith('.json'))
+      .map(f => ({
+        name: f,
+        time: fs.statSync(path.join(backupDir, f)).mtimeMs
+      }))
+      .sort((a, b) => b.time - a.time);
+
+    // Remover os mais antigos se exceder maxKeep
+    if (files.length > maxKeep) {
+      const toRemove = files.slice(maxKeep);
+      toRemove.forEach(f => {
+        try {
+          fs.unlinkSync(path.join(backupDir, f.name));
+          log(`🧹 Backup antigo removido: ${f.name}`);
+        } catch (err) {
+          // Ignorar erros individuais
+        }
+      });
+    }
+  } catch (error) {
+    logError('Erro na rotação de backups:', error);
+  }
+}
+
+function validateAndRestoreAccountsFile() {
+  try {
+    const accountsPath = accountsFilePath;
+    const backupDir = path.join(userDataPath, 'backups');
+    if (fs.existsSync(accountsPath)) {
+      const data = fs.readFileSync(accountsPath, 'utf8');
+      let parsedData;
+      try {
+        parsedData = JSON.parse(data);
+      } catch (e) {
+        parsedData = null;
+      }
+      if (Array.isArray(parsedData) && parsedData.length >= 4) {
+        log('accounts.json validado com sucesso.');
+        return;
+      }
+    }
+    logWarn('accounts.json inválido ou com menos de 4 contas. Tentando restaurar backup...');
+    if (!fs.existsSync(backupDir)) return;
+    const backups = fs.readdirSync(backupDir).filter(file => file.startsWith('accounts_backup_'));
+    backups.sort((a, b) => fs.statSync(path.join(backupDir, b)).mtimeMs - fs.statSync(path.join(backupDir, a)).mtimeMs);
+    for (const backup of backups) {
+      const backupPath = path.join(backupDir, backup);
+      const backupData = fs.readFileSync(backupPath, 'utf8');
+      let parsedBackup;
+      try {
+        parsedBackup = JSON.parse(backupData);
+      } catch (e) {
+        parsedBackup = null;
+      }
+      if (Array.isArray(parsedBackup) && parsedBackup.length >= 4) {
+        fs.copyFileSync(backupPath, accountsPath);
+        log(`accounts.json restaurado do backup: ${backupPath}`);
+        // Notificar renderer sobre restauração automática
+        try {
+          if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('accounts-restored', { backupPath });
+          }
+        } catch (e) {
+          // ignorar erros de notificação
+        }
+        return;
+      }
+    }
+    logError('Nenhum backup válido encontrado para restaurar accounts.json.');
+    // Notificar renderer que não foi possível restaurar
+    try {
+      if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('accounts-restore-failed');
+      }
+    } catch (e) {
+      // ignorar
+    }
+  } catch (error) {
+    logError('Erro ao validar/restaurar accounts.json:', error);
+  }
+}
+
+// Executar restauração/validação ao iniciar
+validateAndRestoreAccountsFile();
+
+// Fila simples para serializar gravações de accounts.json
+let writeQueue = Promise.resolve();
+
+loadAutomationProgress();
+loadUsedNicks();
+// Antes de usar qualquer nick:
+for (let i = automationProgress.currentNickIndex || 0; i < nicksList.length; i++) {
+  const nick = nicksList[i];
+  if (usedNicksSet.has(nick)) {
+    continue; // Pular nick já usado
+  }
+  // ...processar nick normalmente...
+  // Após tentar (sucesso ou erro), salvar nick como usado
+  saveUsedNick(nick);
+  automationProgress.currentNickIndex = i + 1;
+  saveAutomationProgress();
+  break;
+}
 async function loadNicksList() {
   try {
     const nicksPath = path.join(__dirname, 'nicks.txt');
@@ -312,12 +830,11 @@ function clearAllTimers() {
   globalTimers.length = 0;
 }
 
-// Contas padrão
-const defaultAccounts = [
-  { id: 'account1', name: 'Conta 1', profilePicture: null, active: true },
-  { id: 'account2', name: 'Conta 2', profilePicture: null, active: false },
-  { id: 'account3', name: 'Conta 3', profilePicture: null, active: false },
-];
+// Nota: removido `defaultAccounts` intencionalmente para evitar sobrescritas
+// Anteriormente havia um conjunto padrão de 3 contas que eram escritas
+// automaticamente em novos installs — isso causava perda de dados quando
+// o app restaurava/escrevia o padrão sobre um arquivo existente vazio.
+// Para segurança, não criamos mais contas padrão automaticamente.
 
 // User-Agents realistas para rotação (versões mais recentes do Chrome)
 const REALISTIC_USER_AGENTS = [
@@ -354,22 +871,34 @@ function getDirectorySize(dirPath) {
 // User-Agent padrão (fallback)
 const REALISTIC_USER_AGENT = REALISTIC_USER_AGENTS[0];
 
+// Segurança: escrita atômica e fsync para máxima durabilidade.
+// Pode ser desabilitada se causar regressões em alguns ambientes.
+let SAFE_ATOMIC_WRITES = true;
+// Inicialização em lotes para evitar sobrecarregar PCs fracos
+const SESSION_BATCH_SIZE = 12; // quantas sessões tentar por lote
+const SESSION_BATCH_DELAY_MS = 300; // ms entre lotes
+
 // Funções estáveis para leitura/escrita de contas
 function readAccounts() {
   try {
     if (fs.existsSync(accountsFilePath)) {
       const data = fs.readFileSync(accountsFilePath, 'utf-8');
-      const parsedAccounts = JSON.parse(data);
-      log('📖 Contas lidas do arquivo:', parsedAccounts.length);
-      return parsedAccounts;
+      try {
+        const parsedAccounts = JSON.parse(data);
+        log('📖 Contas lidas do arquivo:', parsedAccounts.length);
+        return parsedAccounts;
+      } catch (parseError) {
+        logError('❌ Erro ao fazer parse do JSON de contas:', parseError);
+        log('⚠️ Mantendo arquivo existente - retornando lista vazia em memória');
+        return [];
+      }
     } else {
-      log('📝 Arquivo de contas não existe, criando com contas padrão');
-      writeAccounts(defaultAccounts);
-      return defaultAccounts;
+      log('📝 Arquivo de contas não existe - retornando lista vazia em memória (não criando padrões)');
+      return [];
     }
   } catch (error) {
     logError('❌ Erro ao ler contas:', error);
-    return defaultAccounts;
+    return [];
   }
 }
 
@@ -394,12 +923,68 @@ async function writeAccounts(accountsToSave) {
     });
     
     // ✅ Usar operação async (não bloqueia UI)
-    await fileOps.saveJSON(accountsFilePath, processedAccounts, {
-      createBackup: true,
-      validate: true
-    });
+    // Criar backup explícito antes de sobrescrever o arquivo pra garantir histórico
+    try {
+      createAccountsBackup();
+      // Garantir rotação básica (manter últimos 10 backups)
+      try { createAccountsBackupWithRotation(10); } catch (e) { /* ignore */ }
+    } catch (e) {
+      logWarn('Falha ao criar backup pré-salvamento (ignorado):', e.message || e);
+    }
+
+    // Auditoria: comparar tamanho do arquivo existente com o que será salvo
+    try {
+      if (fs.existsSync(accountsFilePath)) {
+        const existingRaw = fs.readFileSync(accountsFilePath, 'utf8');
+        try {
+          const existingJson = JSON.parse(existingRaw);
+          const existingCount = Array.isArray(existingJson) ? existingJson.length : null;
+          const newCount = Array.isArray(processedAccounts) ? processedAccounts.length : null;
+          if (existingCount !== null && newCount !== null) {
+            if (newCount < existingCount) {
+              logWarn(`⚠️ Salvamento irá reduzir contagem de contas: ${existingCount} -> ${newCount}`);
+              // Criar backup de segurança extra antes de sobrescrever
+              try { createAccountsBackupWithRotation(20); } catch (e) { /* ignore */ }
+              // Notificar renderer sobre possível perda de contas ao salvar
+              try {
+                if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+                  mainWindow.webContents.send('accounts-save-warning', { existingCount, newCount });
+                }
+              } catch (e) {
+                // ignorar erros de notificação
+              }
+            }
+          }
+        } catch (e) {
+          // ignorar parse error
+        }
+      }
+    } catch (e) {
+      // ignorar erros de auditoria
+    }
+
+    // Serializar gravações para evitar concorrência
+    const op = (async () => {
+      await fileOps.saveJSON(accountsFilePath, processedAccounts, {
+        createBackup: true,
+        validate: true,
+        atomic: SAFE_ATOMIC_WRITES
+      });
+    })();
+
+    // Encadear na fila global
+    writeQueue = writeQueue.then(() => op).catch(() => op);
+    await op;
     
     log(`💾 ${processedAccounts.length} contas salvas com sucesso`);
+    // Notificar renderer que o salvamento foi concluído
+    try {
+      if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('accounts-saved', { count: processedAccounts.length });
+      }
+    } catch (e) {
+      // ignorar
+    }
     return true;
   } catch (error) {
     logError('❌ Erro ao salvar contas:', error);
@@ -410,6 +995,13 @@ async function writeAccounts(accountsToSave) {
       try {
         fs.copyFileSync(backupPath, accountsFilePath);
         log('🔄 Backup restaurado após erro');
+        try {
+          if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('accounts-restore-during-save', { backupPath });
+          }
+        } catch (e) {
+          // ignorar
+        }
       } catch (restoreError) {
         logError('❌ Erro ao restaurar backup:', restoreError);
       }
@@ -605,14 +1197,28 @@ async function initializeSessionForAccount(account) {
 async function initializeSessions() {
   try {
     log(`🔄 Inicializando sessões para ${accounts.length} contas...`);
-    
-  for (const account of accounts) {
-      try {
-    await initializeSessionForAccount(account);
-        log(`✅ Sessão inicializada para: ${account.name}`);
-      } catch (error) {
-        logError(`❌ Erro ao inicializar sessão para ${account.name}:`, error);
-        // Continuar com as outras contas mesmo se uma falhar
+    // Inicializar em lotes para reduzir spikes de CPU/memória
+    const batches = [];
+    for (let i = 0; i < accounts.length; i += SESSION_BATCH_SIZE) {
+      batches.push(accounts.slice(i, i + SESSION_BATCH_SIZE));
+    }
+
+    for (let b = 0; b < batches.length; b++) {
+      const batch = batches[b];
+      log(`📦 Inicializando lote ${b + 1}/${batches.length} (${batch.length} contas)`);
+      // Rodar inicializações do lote em paralelo (cada lote limitado pelo tamanho)
+      await Promise.all(batch.map(async account => {
+        try {
+          await initializeSessionForAccount(account);
+          log(`✅ Sessão inicializada para: ${account.name}`);
+        } catch (error) {
+          logError(`❌ Erro ao inicializar sessão para ${account.name}:`, error);
+        }
+      }));
+
+      // Pequena espera entre lotes para dar folga ao sistema
+      if (b < batches.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, SESSION_BATCH_DELAY_MS));
       }
     }
     
@@ -1001,37 +1607,52 @@ async function loadAccounts() {
   try {
     log('🔄 Carregando contas...');
     
-    if (fs.existsSync(accountsFilePath)) {
+        if (fs.existsSync(accountsFilePath)) {
       const data = fs.readFileSync(accountsFilePath, 'utf8');
       
-      // Verificar se o arquivo não está vazio
-      if (data.trim() === '' || data.trim() === '[]') {
-        log('⚠️ Arquivo de contas está vazio, usando contas padrão');
-        accounts = defaultAccounts;
-        writeAccounts(accounts);
-      } else {
+        // Verificar se o arquivo não está vazio
+        if (data.trim() === '' || data.trim() === '[]') {
+          log('⚠️ Arquivo de contas está vazio. Tentando restaurar de backups antes de prosseguir...');
+
+          // Tentar restaurar de backups existentes
+          validateAndRestoreAccountsFile();
+
+          if (fs.existsSync(accountsFilePath)) {
+            try {
+              const redata = fs.readFileSync(accountsFilePath, 'utf8');
+              if (redata.trim() !== '' && redata.trim() !== '[]') {
+                accounts = JSON.parse(redata);
+                log(`✅ accounts.json restaurado de backup com ${accounts.length} contas`);
+              } else {
+                logWarn('Restauro não recuperou dados válidos. Utilizando lista de contas vazia em memória (não sobrescrevendo arquivo).');
+                accounts = [];
+                // Não sobrescrever o arquivo automaticamente para evitar perda
+              }
+            } catch (e) {
+              logError('Erro ao ler arquivo restaurado:', e);
+              accounts = [];
+            }
+          } else {
+            logWarn('Nenhum backup encontrado. Utilizando lista de contas vazia em memória (não sobrescrevendo arquivo).');
+            accounts = [];
+          }
+        } else {
         try {
           accounts = JSON.parse(data);
           log(`📱 ${accounts.length} contas carregadas do arquivo.`);
           
-          // ✅ PROTEÇÃO CRÍTICA: NUNCA sobrescrever contas reais com padrão
-          // Se o arquivo tem mais de 3 contas, NÃO substituir por padrão mesmo se houver erro
+          // ✅ PROTEÇÃO CRÍTICA: NÃO sobrescrever automaticamente com padrões
           if (!Array.isArray(accounts) || accounts.length === 0) {
-            log('⚠️ Contas inválidas, usando contas padrão');
-            accounts = defaultAccounts;
-            writeAccounts(accounts);
-          } else if (accounts.length === 3 && JSON.stringify(accounts) === JSON.stringify(defaultAccounts)) {
-            // Se são exatamente as 3 contas padrão, ok usar padrão
-            log('📋 Usando contas padrão');
+            logWarn('⚠️ Contas inválidas ou vazias. Usando lista vazia em memória (não sobrescrevendo arquivo).');
+            accounts = [];
           } else {
-            // Se tem mais de 3 contas OU são diferentes do padrão, NUNCA sobrescrever
             log(`✅ ${accounts.length} contas do usuário carregadas - protegidas contra sobrescrita`);
           }
         } catch (parseError) {
           logError('❌ Erro ao fazer parse do JSON de contas:', parseError);
-          // 🔒 SE JÁ EXISTE arquivo e tem conteúdo, NÃO sobrescrever cegamente
-          log('⚠️ Mantendo arquivo existente - não sobrescrevendo com contas padrão');
-          accounts = defaultAccounts; // Usar padrão EM MEMÓRIA mas NÃO salvar
+          // 🔒 SE JÁ EXISTE arquivo e tem conteúdo inválido, NÃO sobrescrever cegamente
+          log('⚠️ Mantendo arquivo existente - não sobrescrevendo. Usando lista vazia em memória.');
+          accounts = [];
           // NÃO chamar writeAccounts aqui para não sobrescrever
         }
       }
@@ -1048,20 +1669,19 @@ async function loadAccounts() {
         if (!account.id) account.id = `account${index + 1}`;
       });
       
-      // Salvar contas processadas
-      writeAccounts(accounts);
+  // Salvar contas processadas (aguardar conclusão)
+  await writeAccounts(accounts);
       log(`✅ ${accounts.length} contas processadas e salvas`);
     } else {
-      log('📝 Arquivo de contas não existe, criando com contas padrão');
-      accounts = defaultAccounts;
-      writeAccounts(accounts);
-      log('✅ Contas padrão criadas e salvas');
+      log('📝 Arquivo de contas não existe. Iniciando com lista vazia em memória (não criando padrões).');
+      accounts = [];
+      // Não criar/grav ar contas padrão automaticamente para evitar sobrescrita acidental
     }
   } catch (error) {
     logError('❌ Erro ao carregar contas:', error);
-    log('🔄 Usando contas padrão como fallback');
-    accounts = defaultAccounts;
-    writeAccounts(accounts);
+    log('🔄 Usando lista vazia como fallback (não sobrescrevendo arquivo)');
+    accounts = [];
+    // Não salvar para evitar sobrescrita de possíveis arquivos corrompidos
   }
   
   // Inicializar sessões de forma assíncrona
@@ -1242,7 +1862,7 @@ async function extractProfilePicture(view, accountId) {
       const account = accounts.find(acc => acc.id === accountId);
       if (account) {
         account.profilePicture = userAvatarUrl;
-        writeAccounts(accounts);
+        await writeAccounts(accounts);
         mainWindow.webContents.send('profile-picture-updated', accountId, userAvatarUrl);
       }
     } else {
@@ -1435,7 +2055,7 @@ ipcMain.handle('remove-account', async (event, accountId) => {
       browserViews.delete(accountId);
     }
     
-    writeAccounts(accounts);
+    await writeAccounts(accounts);
   }
   return accounts;
 });
@@ -3772,6 +4392,26 @@ app.whenReady().then(async () => {
   // 🔄 SISTEMA DE BACKUP/RESTORE COMPLETO ANTES DO APP CARREGAR
   try {
     const userDataPath = app.getPath('userData');
+    // Ler settings.json (se existir) para opções como SAFE_ATOMIC_WRITES
+    try {
+      const settingsPath = path.join(userDataPath, 'settings.json');
+      if (fs.existsSync(settingsPath)) {
+        try {
+          const sdata = fs.readFileSync(settingsPath, 'utf8');
+          const settings = JSON.parse(sdata);
+          if (typeof settings.SAFE_ATOMIC_WRITES === 'boolean') {
+            SAFE_ATOMIC_WRITES = settings.SAFE_ATOMIC_WRITES;
+          } else if (typeof settings.safeAtomicWrites === 'boolean') {
+            SAFE_ATOMIC_WRITES = settings.safeAtomicWrites;
+          }
+          log(`⚙️ SAFE_ATOMIC_WRITES = ${SAFE_ATOMIC_WRITES}`);
+        } catch (e) {
+          logWarn('Erro ao parsear settings.json:', e && e.message ? e.message : e);
+        }
+      }
+    } catch (e) {
+      logWarn('Erro ao carregar settings.json (ignorado):', e && e.message ? e.message : e);
+    }
     const accountsPath = path.join(userDataPath, 'accounts.json');
     const partitionsPath = path.join(userDataPath, 'Partitions');
     const backupIntentPath = path.join(userDataPath, 'pending-backup.json');
@@ -4545,49 +5185,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('reset-automation-progress', async () => {
     return resetProgress();
   });
-
-  // Handler para quando o painel de automação é aberto (pausar automação)
-  ipcMain.handle('automation-panel-opened', async () => {
-    try {
-      if (automationEngine && automationEngine.isRunning) {
-        automationEngine.isPausedByPanel = true;
-        automationLog(`⏸️ Automação pausada - painel aberto`);
-        
-        // Esconder todas as BrowserViews para prevenir sobreposição
-        const currentViews = mainWindow.getBrowserViews();
-        currentViews.forEach(view => {
-          view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-        });
-        
-        log(`⏸️ Automação pausada pelo painel`);
-        return { success: true, paused: true };
-      }
-      return { success: true, paused: false };
-    } catch (error) {
-      logError('❌ Erro ao pausar automação pelo painel:', error);
-      return { success: false, error: error.message };
-    }
-  });
-  
-  // Handler para quando o painel de automação é fechado (retomar automação)
-  ipcMain.handle('automation-panel-closed', async () => {
-    try {
-      if (automationEngine && automationEngine.isPausedByPanel) {
-        automationEngine.isPausedByPanel = false;
-        automationLog(`▶️ Automação retomada - painel fechado`);
-        
-        // Restaurar BrowserView ativa
-        updateBrowserViewBounds();
-        
-        log(`▶️ Automação retomada após fechar painel`);
-        return { success: true, resumed: true };
-      }
-      return { success: true, resumed: false };
-    } catch (error) {
-      logError('❌ Erro ao retomar automação:', error);
-      return { success: false, error: error.message };
-    }
-  });
+  // NOTE: panel-opened / panel-closed handlers removed — pause-by-panel behavior deprecated.
   
   // Handler para salvar webhook URL (PERMANENTE em settings.json)
   ipcMain.handle('automation-save-webhook', async (event, webhookUrl) => {
@@ -5531,6 +6129,13 @@ app.whenReady().then(async () => {
               saveIncrementalStats();
               
               continue;
+            }
+            // Remover o nick da lista IMEDIATAMENTE após digitação bem-sucedida
+            try {
+              console.log(`[DEBUG] Chamando useNick para: ${currentNick}`);
+              useNick(currentNick);
+            } catch (e) {
+              console.error('[DEBUG] Erro ao chamar useNick:', e);
             }
             
             // 6. Delay para o Discord processar (reduzido)
@@ -6973,7 +7578,7 @@ app.on('window-all-closed', async () => {
 app.on('before-quit', async event => {
    log('💾 Salvando dados da sessão antes de sair...');
    
-   // Parar timers de limpeza antes de fechar
+  // Parar timers de limpeza antes de fechar
    stopCleanupTimers();
    timerManager.cleanup(); // Limpar TODOS os timers
   clearAllTimers(); // Limpar timers globais
@@ -7001,6 +7606,14 @@ app.on('before-quit', async event => {
     log('✅ SessionMap limpa');
   }
    
+   // Criar backup imediato antes das tentativas de salvamento final
+   try {
+     createAccountsBackup();
+     try { createAccountsBackupWithRotation(10); } catch (e) { /* ignore */ }
+   } catch (e) {
+     logWarn('Falha ao criar backup imediato antes de sair (ignorado):', e.message || e);
+   }
+
    event.preventDefault();
    
    try {
@@ -7016,10 +7629,11 @@ app.on('before-quit', async event => {
          attempts++;
          log(`💾 Tentativa ${attempts}/${maxAttempts} de salvamento...`);
          
-         // Forçar o salvamento das contas
-         const saveResult = writeAccounts(accounts);
+  // Forçar o salvamento das contas (aguardar fila)
+   await writeQueue;
+   const saveResult = await writeAccounts(accounts);
          
-         if (saveResult) {
+   if (saveResult) {
          // Verificar se salvou corretamente
          const userDataPath = app.getPath('userData');
          const accountsPath = path.join(userDataPath, 'accounts.json');

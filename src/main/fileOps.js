@@ -8,12 +8,29 @@
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const path = require('path');
+const { app } = require('electron');
+
+// Helper para escrever logs de erro/diagnóstico em userData/logs
+function writeDiagnosticLog(name, content) {
+  try {
+    const userData = (app && app.getPath) ? app.getPath('userData') : path.join(__dirname, '..');
+    const logsDir = path.join(userData, 'logs');
+    if (!fsSync.existsSync(logsDir)) fsSync.mkdirSync(logsDir, { recursive: true });
+    const filename = path.join(logsDir, `${name}-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
+    fsSync.writeFileSync(filename, `${new Date().toISOString()}\n${content}\n`);
+    return filename;
+  } catch (e) {
+    // Se falhar ao escrever logs, não queremos quebrar a lógica de salvamento
+    try { console.error('Falha ao escrever diagnostic log:', e); } catch (ignore) { void 0; }
+    return null;
+  }
+}
 
 /**
  * Salva JSON de forma async com backup automático
  */
 async function saveJSON(filePath, data, options = {}) {
-  const { createBackup = true, validate = true, keepHistory = false } = options;
+  const { createBackup = true, validate = true, keepHistory = false, atomic = false } = options;
   
   try {
     // Validar dados antes de salvar
@@ -53,8 +70,77 @@ async function saveJSON(filePath, data, options = {}) {
       await fs.copyFile(filePath, backupPath);
     }
     
-    // Salvar novo arquivo
+    // Se solicitado, tentar escrita atômica com fsync (melhor durabilidade)
     const jsonString = JSON.stringify(data, null, 2);
+    if (atomic) {
+      // Tentar escrita atômica com pequenas tentativas (retries)
+      const dir = path.dirname(filePath);
+      if (!fsSync.existsSync(dir)) fsSync.mkdirSync(dir, { recursive: true });
+      const maxAttempts = 3;
+      let lastAtomicError = null;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+          const tmpPath = `${filePath}.tmp-${timestamp}`;
+
+          // Escrever em arquivo temporário (sync para garantir fsync)
+          const fd = fsSync.openSync(tmpPath, 'w');
+          try {
+            fsSync.writeSync(fd, jsonString, 'utf8');
+            fsSync.fsyncSync(fd);
+          } finally {
+            try { fsSync.closeSync(fd); } catch (e) { void 0; }
+          }
+
+          // Renomear atômico para o destino
+          fsSync.renameSync(tmpPath, filePath);
+
+          // Tentar fsync do diretório (melhor garantia de persistência)
+          try {
+            const dirFd = fsSync.openSync(dir, 'r');
+            try { fsSync.fsyncSync(dirFd); } finally { fsSync.closeSync(dirFd); }
+          } catch (e) {
+            // Alguns sistemas/Windows podem falhar ao fsync do diretório; ignorar
+            void 0;
+          }
+
+          // Validação opcional
+          if (validate) {
+            const saved = await fs.readFile(filePath, 'utf8');
+            const parsed = JSON.parse(saved);
+            if (JSON.stringify(parsed) !== JSON.stringify(data)) {
+              throw new Error('Verificação de salvamento falhou após escrita atômica');
+            }
+          }
+
+          // Remover backup temporário se tudo deu certo
+          if (createBackup && fsSync.existsSync(`${filePath}.backup`)) {
+            await fs.unlink(`${filePath}.backup`);
+          }
+
+          return { success: true, path: filePath };
+        } catch (atomicError) {
+          lastAtomicError = atomicError;
+          // Log diagnóstico para ajudar a entender falhas em campo
+          try {
+            writeDiagnosticLog('atomic-write-failure', `${filePath}\nAttempt ${attempt} failed:\n${atomicError && (atomicError.stack || atomicError.message)}`);
+          } catch (e) { /* ignore */ }
+
+          // Se ainda houver tentativas, aguardar um curto período antes de tentar de novo
+          if (attempt < maxAttempts) {
+            await new Promise(r => setTimeout(r, 100 * attempt));
+            continue;
+          }
+
+          // Se esgotaram tentativas, avisar e cair para fallback não-atômico
+          console.warn('⚠️ Escrita atômica falhou após tentativas, fazendo fallback para escrita normal:', atomicError && atomicError.message);
+        }
+      }
+      // cair para o caminho não-atômico abaixo
+    }
+
+    // Salvar novo arquivo (caminho original não-atômico)
     await fs.writeFile(filePath, jsonString, 'utf8');
     
     // Verificar se salvou corretamente
@@ -84,6 +170,10 @@ async function saveJSON(filePath, data, options = {}) {
       }
     }
     
+    try {
+      // Logar diagnóstico adicional antes de propagar
+      writeDiagnosticLog('savejson-final-error', `${filePath}\nError:\n${error && (error.stack || error.message)}`);
+    } catch (e) { /* ignore */ }
     throw error;
   }
 }

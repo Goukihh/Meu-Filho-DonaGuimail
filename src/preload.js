@@ -67,8 +67,10 @@ contextBridge.exposeInMainWorld('electron', {
     stop: () => ipcRenderer.invoke('automation-stop'),
     getStatus: () => ipcRenderer.invoke('automation-status'),
     setGroup: group => ipcRenderer.invoke('automation-set-group', group),
-    panelOpened: () => ipcRenderer.invoke('automation-panel-opened'),
-    panelClosed: () => ipcRenderer.invoke('automation-panel-closed'),
+  // Panel open/close used to pause/resume automation when the automation panel was opened.
+  // The pause feature was removed; expose no-op functions so older renderer calls still resolve.
+  panelOpened: () => Promise.resolve({ success: true, paused: false }),
+  panelClosed: () => Promise.resolve({ success: true, resumed: false }),
     saveWebhook: url => ipcRenderer.invoke('automation-save-webhook', url),
   },
   // Métodos para limpeza de DMs e amigos

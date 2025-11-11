@@ -807,6 +807,50 @@
   background-clip: text;
 }
 
+/* Notificações do app (toasts e notificações maiores) */
+.toast-notification,
+.notification {
+  transition: transform 0.3s ease, opacity 0.3s ease;
+  opacity: 1;
+}
+
+.toast-notification {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  max-width: 320px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  z-index: 11000;
+}
+
+.toast-notification .toast-message {
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.notification {
+  position: fixed; /* default, actual positioning set by JS */
+  top: 20px;
+  right: 20px;
+  padding: 12px 18px;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+  z-index: 11000;
+}
+
+.notification .notification-content {
+  color: #ffffff;
+  font-weight: 700;
+}
+
+/* Indicar que é interativo (hover-to-dismiss) */
+.toast-notification:hover,
+.notification:hover {
+  cursor: pointer;
+}
+
 /* Nomes das contas mantêm cor normal */
 .account-name {
   color: #ffffff;
