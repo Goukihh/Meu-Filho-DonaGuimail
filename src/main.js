@@ -4905,8 +4905,11 @@ app.whenReady().then(async () => {
         );
       }
       
-      // Iniciar processo de automação
-      startRealAutomation();
+  // Iniciar processo de automação
+  // COMPORTAMENTO: aguardar 2s antes de começar para reduzir races na criação de BrowserViews
+  automationLog('⏳ Aguardando 2s antes de iniciar a automação (reduzindo condições de corrida)');
+  await sleep(2000);
+  startRealAutomation();
       
       log('✅ Automação REAL iniciada com sucesso');
       return { success: true, message: 'Automação iniciada - começando trabalho...' };
@@ -5371,6 +5374,68 @@ app.whenReady().then(async () => {
   
   function randomDelay(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  // Aguardar até que a BrowserView associada a uma conta tenha carregado
+  // Retorna true se carregou, false se timeout ou erro
+  async function waitForBrowserViewLoad(accountId, timeoutMs = 8000) {
+    try {
+      const view = browserViews.get(accountId);
+      if (!view || !view.webContents) {
+        automationLog(`⚠️ waitForBrowserViewLoad: view não existe para ${accountId}`);
+        return false;
+      }
+
+      const wc = view.webContents;
+
+      // Se já não está carregando, presumir que está pronto
+      if (!wc.isLoading()) {
+        automationLog(`✅ waitForBrowserViewLoad: view já pronta para ${accountId}`);
+        return true;
+      }
+
+      return await new Promise(resolve => {
+        let resolved = false;
+
+        const finishHandler = () => {
+          if (resolved) return; resolved = true;
+          cleanup();
+          automationLog(`✅ waitForBrowserViewLoad: did-finish-load para ${accountId}`);
+          resolve(true);
+        };
+
+        const failHandler = (event, errorCode, errorDescription, validatedURL) => {
+          if (resolved) return; resolved = true;
+          cleanup();
+          automationLog(`⚠️ waitForBrowserViewLoad: did-fail-load para ${accountId} - ${errorDescription}`);
+          resolve(false);
+        };
+
+        const timer = setTimeout(() => {
+          if (resolved) return; resolved = true;
+          cleanup();
+          automationLog(`⏰ waitForBrowserViewLoad: timeout após ${timeoutMs}ms para ${accountId}`);
+          resolve(false);
+        }, timeoutMs);
+
+        function cleanup() {
+          try {
+            wc.removeListener('did-finish-load', finishHandler);
+            wc.removeListener('did-fail-load', failHandler);
+          } catch (e) {
+            // Log any unexpected error when removing listeners — avoid empty catch blocks
+            try { logWarn('waitForBrowserViewLoad cleanup removeListener error', e); } catch (logErr) { /* ignore logging errors */ }
+          }
+          clearTimeout(timer);
+        }
+
+        wc.once('did-finish-load', finishHandler);
+        wc.once('did-fail-load', failHandler);
+      });
+    } catch (error) {
+      logError('❌ Erro em waitForBrowserViewLoad:', error && (error.stack || error.message) ? (error.stack || error.message) : error);
+      return false;
+    }
   }
   
   // Função para enviar log de limpeza
@@ -6730,12 +6795,48 @@ app.whenReady().then(async () => {
         await switchToBrowserView(accountId);
       }
       
-      // AGUARDAR UM POUCO PARA GARANTIR QUE A VIEW FOI TROCADA
-      await sleep(500);
-      
-      // FORÇAR ATUALIZAÇÃO DOS BOUNDS
+      // AGUARDAR ATÉ QUE A BrowserView CARREGUE (ou timeout)
+      let viewLoaded = await waitForBrowserViewLoad(accountId, 8000);
+
+      // Se não carregou, tentar fallback com duplo click na aba (algumas vezes o primeiro click só foca)
+      if (!viewLoaded) {
+        automationLog(`⚠️ BrowserView não reportou carregamento para ${accountId} - tentando double-click/fallback`);
+
+        try {
+          await mainWindow.webContents.executeJavaScript(`
+            (function() {
+              try {
+                const accountTab = document.querySelector('div.avatar-tab[data-account-id="${accountId}"]');
+                if (!accountTab) return { success: false, message: 'Aba não encontrada para double-click' };
+                accountTab.click();
+                setTimeout(() => { accountTab.click(); }, 120);
+                return { success: true, message: 'Double-click enviado' };
+              } catch (e) {
+                return { success: false, message: e.message };
+              }
+            })();
+          `);
+        } catch (e) {
+          automationLog(`⚠️ Falha ao executar double-click JS: ${e.message || e}`);
+        }
+
+        // Aguardar um pouco e tentar de novo
+        await sleep(300);
+        viewLoaded = await waitForBrowserViewLoad(accountId, 8000);
+
+        // Se ainda não carregou, forçar attach via switchToBrowserView e tentar mais uma vez
+        if (!viewLoaded) {
+          automationLog(`⚠️ Fallback duplo falhou - forçando switchToBrowserView para ${accountId}`);
+          await switchToBrowserView(accountId);
+          // Aguardar e checar novamente
+          await sleep(300);
+          viewLoaded = await waitForBrowserViewLoad(accountId, 8000);
+        }
+      }
+
+      // FORÇAR ATUALIZAÇÃO DOS BOUNDS (mesmo se viewLoaded=false, para minimizar impacto)
       updateBrowserViewBounds();
-      automationLog(`📐 Bounds da BrowserView atualizados`);
+      automationLog(`📐 Bounds da BrowserView atualizados (viewLoaded=${viewLoaded})`);
       
       // Notificar renderer sobre a mudança
       mainWindow.webContents.send('account-switched', accountId);
@@ -6898,7 +6999,8 @@ app.whenReady().then(async () => {
       
       // Se esgotou tentativas, falha definitivamente
       automationLog(`❌ Falha definitiva após ${maxRetries + 1} tentativas: ${errorMsg}`);
-      logError('❌ Erro na navegação:', error);
+      // Log mais verboso: incluir stack ou message para evitar '{}'
+      logError('❌ Erro na navegação:', error && (error.stack || error.message) ? (error.stack || error.message) : error);
       return false;
     }
   }

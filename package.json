@@ -1,6 +1,6 @@
 {
   "name": "meu-filho",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "description": "Um cliente Discord para múltiplas contas com mascaramento avançado de navegador.",
   "main": "src/main.js",
   "scripts": {
