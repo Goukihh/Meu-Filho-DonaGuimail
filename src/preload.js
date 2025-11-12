@@ -3,8 +3,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electron', {
   send: (channel, data) => ipcRenderer.send(channel, data),
   invoke: (channel, data) => ipcRenderer.invoke(channel, data),
-  on: (channel, func) => {
+    on: (channel, func) => {
     const validChannels = [
+    'automation-nicks-status',
       'accounts-updated',
       'prompt-for-rename',
       'prompt-for-clear-session',
@@ -30,6 +31,7 @@ contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
     on: (channel, func) => {
       const validChannels = [
+        'automation-nicks-status',
         'accounts-updated',
         'prompt-for-rename',
         'prompt-for-clear-session',

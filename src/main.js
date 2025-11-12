@@ -100,6 +100,9 @@ function handleCrash(type, err) {
 // Usar pasta de dados do usuário para persistência permanente
 const userDataPath = app.getPath('userData');
 
+// Flag para indicar que um reset está em andamento e evitar sobrescritas concorrentes
+let resetInProgress = false;
+
 function validateAndRestoreCriticalFile(filePath, minLength = 10) {
   try {
     if (!fs.existsSync(filePath)) return;
@@ -161,7 +164,30 @@ function loadAutomationProgress() {
 let progressWriteQueue = Promise.resolve();
 
 // Função unificada e atômica para salvar progresso
-async function saveProgress() {
+async function saveProgressAtomic() {
+  // Se a engine está ativa, sincronizar valores relevantes para o objeto
+  // de progresso central antes de persistir. Isso garante que chamadas
+  // a `saveProgress()` que apenas atualizam `automationEngine` sejam
+  // refletidas no arquivo de progresso.
+  if (typeof automationEngine === 'object' && automationEngine) {
+    try {
+      automationProgress.currentNickIndex = typeof automationEngine.currentNickIndex === 'number' ? automationEngine.currentNickIndex : (automationProgress.currentNickIndex || 0);
+      automationProgress.totalInvitesSent = typeof automationEngine.totalInvitesSent === 'number' ? automationEngine.totalInvitesSent : (automationProgress.totalInvitesSent || 0);
+      automationProgress.currentCiclo = typeof automationEngine.currentCiclo === 'number' ? automationEngine.currentCiclo : (automationProgress.currentCiclo || 0);
+      automationProgress.currentAccountIndex = typeof automationEngine.currentAccountIndex === 'number' ? automationEngine.currentAccountIndex : (automationProgress.currentAccountIndex || 0);
+      automationProgress.webhookUrl = automationEngine.webhookUrl || automationProgress.webhookUrl || null;
+      // Se um reset está em andamento, forçar a leva para 1 (não deixar outro flow sobrescrever)
+      if (resetInProgress) {
+        automationProgress.currentLeva = 1;
+      } else {
+        automationProgress.currentLeva = typeof automationEngine.currentLeva === 'number' ? automationEngine.currentLeva : (automationProgress.currentLeva || 0);
+      }
+    } catch (e) {
+      // não bloquear em caso de erro de sincronização
+      logWarn('⚠️ Falha ao sincronizar automationEngine para automationProgress antes de salvar:', e && e.message ? e.message : e);
+    }
+  }
+
   // Atualizar timestamp
   automationProgress.lastUpdate = new Date().toISOString();
 
@@ -195,7 +221,7 @@ async function saveProgress() {
 // Compat shim para manter chamadas existentes
 function saveAutomationProgress() {
   // Não bloquear: dispara gravação assincronamente e registra erros
-  saveProgress().catch(e => logWarn('saveAutomationProgress erro:', e));
+  return saveProgressAtomic().catch(e => logWarn('saveAutomationProgress erro:', e));
 }
 
 const usedNicksPath = path.join(userDataPath, 'used-nicks.json');
@@ -281,6 +307,25 @@ function loadLoadedNicks() {
       logWarn('Erro ao carregar loaded-nicks.json:', e);
     }
   }
+  // Broadcast to renderer (if ready) the initial count of loaded nicks
+  try {
+    if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('automation-nicks-status', { count: loadedNicksList.length });
+    } else {
+      // If mainWindow not ready yet, postpone a little and try again
+      setTimeout(() => {
+        try {
+          if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('automation-nicks-status', { count: loadedNicksList.length });
+          }
+        } catch (e) {
+          // ignore
+        }
+      }, 800);
+    }
+  } catch (e) {
+    // ignore broadcasting errors
+  }
 }
 
 function saveLoadedNicks() {
@@ -325,41 +370,64 @@ function getNextNick() {
 // This guarantees that once a nick is handed out it is removed from disk
 // and recorded in used-nicks, preventing duplicates even across restarts.
 async function claimNextNick() {
-  if (loadedNicksList.length === 0) return null;
-  const nick = loadedNicksList.shift();
-
-  // Persist the updated loaded-nicks list
-  await saveLoadedNicks();
-
-  // Mark as used and persist used-nicks atomically
+  // Skip any nicks that are already marked as used to avoid duplicates
   try {
-    if (!usedNicksSet.has(nick)) {
-      usedNicksSet.add(nick);
-      // Podar se exceder limite (mantém only latest)
-      pruneUsedNicksIfNeeded(nick);
-      // Use fileOps for atomic write
-      await fileOps.saveJSON(usedNicksPath, Array.from(usedNicksSet), {
-        createBackup: true,
-        validate: true,
-        atomic: SAFE_ATOMIC_WRITES,
-      });
+    while (loadedNicksList.length > 0) {
+      const candidate = loadedNicksList.shift();
+      if (!candidate) continue;
+      if (usedNicksSet.has(candidate)) {
+        // already used previously, skip and continue
+        continue;
+      }
+
+      // Persist the updated loaded-nicks list (removed candidate)
+      try {
+        await saveLoadedNicks();
+      } catch (e) {
+        logWarn('⚠️ Falha ao salvar loaded-nicks após claim (continuando):', e && e.message ? e.message : e);
+      }
+
+      // Mark as used and persist used-nicks atomically
+      try {
+        usedNicksSet.add(candidate);
+        pruneUsedNicksIfNeeded(candidate);
+        await fileOps.saveJSON(usedNicksPath, Array.from(usedNicksSet), {
+          createBackup: true,
+          validate: true,
+          atomic: SAFE_ATOMIC_WRITES,
+        });
+      } catch (e) {
+        // Fallback to sync write if atomic fails
+        try {
+          fs.writeFileSync(usedNicksPath, JSON.stringify(Array.from(usedNicksSet), null, 2), 'utf8');
+        } catch (err) {
+          logWarn('Erro ao persistir used-nicks após claimNextNick:', err);
+        }
+      }
+
+      // Sync engine in-memory list
+      if (automationEngine && Array.isArray(automationEngine.nicksList)) {
+        automationEngine.nicksList = [...loadedNicksList];
+      }
+
+      console.log(`[DEBUG] claimNextNick -> ${candidate}`);
+      // Notify renderer about updated count
+      try {
+        if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('automation-nicks-status', { count: loadedNicksList.length });
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      return candidate;
     }
-  } catch (e) {
-    // Fallback to sync write if atomic fails
-    try {
-      fs.writeFileSync(usedNicksPath, JSON.stringify(Array.from(usedNicksSet), null, 2), 'utf8');
-    } catch (err) {
-      logWarn('Erro ao persistir used-nicks após claimNextNick:', err);
-    }
+  } catch (err) {
+    logWarn('⚠️ Erro em claimNextNick loop:', err && err.message ? err.message : err);
   }
 
-  // Sync engine in-memory list
-  if (automationEngine && Array.isArray(automationEngine.nicksList)) {
-    automationEngine.nicksList = [...loadedNicksList];
-  }
-
-  console.log(`[DEBUG] claimNextNick -> ${nick}`);
-  return nick;
+  // No available nick
+  return null;
 }
 
 function useNick(nick) {
@@ -370,36 +438,6 @@ function useNick(nick) {
       logWarn(`Tentou usar nick já marcado como usado: ${nick}`);
       return;
     }
-
-    const idx = loadedNicksList.indexOf(nick);
-    if (idx === -1) {
-      logWarn(`Tentou usar nick inexistente: ${nick}`);
-      console.warn(`[DEBUG] Tentou remover nick inexistente: ${nick}`);
-      return;
-    }
-
-    // Remove from in-memory list
-    loadedNicksList.splice(idx, 1);
-
-    // Persist loaded-nicks atomically (serialized)
-    try {
-      await saveLoadedNicks();
-    } catch (e) {
-      logWarn('Erro ao persistir loaded-nicks após remoção:', e);
-    }
-
-    // Ajustar ponteiro de progresso se necessário para evitar pular o próximo nick
-    try {
-      if (typeof automationProgress === 'object' && typeof automationProgress.currentNickIndex === 'number') {
-        if (automationProgress.currentNickIndex > idx) {
-          automationProgress.currentNickIndex = Math.max(0, automationProgress.currentNickIndex - 1);
-          await saveProgress();
-        }
-      }
-    } catch (e) {
-      logWarn('Erro ao ajustar automationProgress após remoção de nick:', e);
-    }
-
     // Registrar e garantir que nick usado seja marcado em used-nicks (persistir atômico)
     try {
       if (!usedNicksSet.has(nick)) {
@@ -425,15 +463,17 @@ function useNick(nick) {
     } catch (e) {
       logWarn('Erro ao marcar nick como usado:', e);
     }
-
-    // Atualizar engine em memória
-    if (automationEngine && Array.isArray(automationEngine.nicksList)) {
-      automationEngine.nicksList = [...loadedNicksList];
+    // Não remover da lista persistida: usamos index-only. Apenas atualizar status e logs
+    log(`Nick marcado como usado: ${nick}`);
+    console.log(`[DEBUG] Nick marcado como usado: ${nick}`);
+    try {
+      // Atualizar engine em memória somente se existir
+      if (automationEngine && Array.isArray(automationEngine.nicksList)) {
+        // Nada a alterar na lista, progressão é controlada por currentNickIndex
+      }
+    } catch (e) {
+      logWarn('Erro ao atualizar engine após useNick:', e);
     }
-
-    log(`Nick usado e removido: ${nick}`);
-    console.log(`[DEBUG] Nick removido da lista: ${nick}`);
-    console.log(`[DEBUG] Lista atual de nicks:`, loadedNicksList.slice(0,5));
   })().catch(e => logWarn('useNick worker erro:', e));
 
 }
@@ -584,6 +624,104 @@ let isRenaming = false;
 let isClearing = false;
 let isRemoving = false;
 let isAddingAccount = false;
+// Pause/watchdog helpers for temporary UI actions that must pause automation
+const DEFAULT_PAUSE_TIMEOUT_MS = 30000; // 30s default watchdog
+let currentPause = null; // { reason, timer }
+
+function beginTemporaryPause(reason, timeoutMs = DEFAULT_PAUSE_TIMEOUT_MS) {
+  try {
+    // If already paused for the same reason, refresh timer
+    if (currentPause && currentPause.reason === reason) {
+      // Refresh requested, but auto-resume is disabled — keep pause active.
+      log(`⏰ Pause refreshed for reason: ${reason} (auto-resume disabled)`);
+      return;
+    }
+
+    // Preserve minimal automation state for resume
+    const preserved = automationEngine
+      ? {
+          currentNickIndex: automationEngine.currentNickIndex,
+          currentAccountIndex: automationEngine.currentAccountIndex,
+          currentCiclo: automationEngine.currentCiclo,
+          totalInvitesSent: automationEngine.totalInvitesSent,
+          wasRunning: automationEngine.isRunning,
+        }
+      : null;
+
+    // Stop automation while UI action runs
+    if (automationEngine) {
+      automationEngine.isRunning = false;
+      automationEngine._preservedState = preserved;
+    }
+
+    // Watchdog/auto-resume disabled: do not auto-resume after modal actions.
+    // This prevents unwanted automatic restarts of the automation when UIs open.
+    currentPause = { reason, timer: null };
+    log(`⏸️ Automation temporarily paused for reason: ${reason} (auto-resume disabled)`);
+
+    // Previously we notified the renderer about a temporary pause.
+    // Removed: sending 'automation-paused' causes an interactive toast that
+    // auto-resumes the automation in undesired contexts (modals). Do not emit.
+  } catch (e) {
+    logWarn('Erro ao iniciar pausa temporária:', e && e.message ? e.message : e);
+  }
+}
+
+function endTemporaryPause(reason, forced = false) {
+  try {
+    if (!currentPause) return;
+    if (reason && currentPause.reason !== reason && !forced) {
+      // Different pause in effect and not forced: ignore
+      return;
+    }
+
+    clearTimeout(currentPause.timer);
+    log(`▶️ Ending temporary pause for reason: ${currentPause.reason} ${forced ? '(forced by timeout)' : ''}`);
+
+    // Restore automation state and resume if it was running before
+    if (automationEngine && automationEngine._preservedState) {
+      const p = automationEngine._preservedState || {};
+      automationEngine.currentNickIndex = typeof p.currentNickIndex === 'number' ? p.currentNickIndex : automationEngine.currentNickIndex;
+      automationEngine.currentAccountIndex = typeof p.currentAccountIndex === 'number' ? p.currentAccountIndex : automationEngine.currentAccountIndex;
+      automationEngine.currentCiclo = typeof p.currentCiclo === 'number' ? p.currentCiclo : automationEngine.currentCiclo;
+      automationEngine.totalInvitesSent = typeof p.totalInvitesSent === 'number' ? p.totalInvitesSent : automationEngine.totalInvitesSent;
+      const shouldRun = p.wasRunning === true;
+      automationEngine._preservedState = null;
+      automationEngine.waitingForNicks = false;
+      if (shouldRun) {
+        // If a stop was requested by the user, do not auto-resume.
+        if (automationEngine && automationEngine.stopRequested) {
+          log('▶️ Resume suppressed: stopRequested is set (user requested stop)');
+        } else {
+          automationEngine.isRunning = true;
+          // kick off automation loop; emit internal event to request resume
+          setImmediate(() => {
+            try {
+              process.emit('resume-automation');
+            } catch (err) {
+              logWarn('Erro ao emitir evento interno de resume-automation:', err);
+            }
+          });
+        }
+      }
+    }
+
+    // Clear flags that might have been set by UI actions
+    isAddingAccount = false;
+    isRenaming = false;
+    isClearing = false;
+    isRemoving = false;
+
+    // Previously we notified the renderer about resume. Renderer-side toast
+    // was removed because it produced unwanted auto-resume behavior.
+
+    currentPause = null;
+  } catch (e) {
+    logWarn('Erro ao terminar pausa temporária:', e && e.message ? e.message : e);
+  }
+}
+
+// (watchdog resume will emit an internal event; listener is registered at module end)
 // Sistema de automação de convites
 let automationEngine = null;
 let nicksList = []; // Lista de nicks carregados do arquivo
@@ -720,6 +858,8 @@ function validateAndRestoreAccountsFile() {
     logError('Erro ao validar/restaurar accounts.json:', error);
   }
 }
+
+// (resume listener will be registered after startRealAutomation is defined)
 
 // Executar restauração/validação ao iniciar
 validateAndRestoreAccountsFile();
@@ -927,7 +1067,7 @@ async function writeAccounts(accountsToSave) {
     try {
       createAccountsBackup();
       // Garantir rotação básica (manter últimos 10 backups)
-      try { createAccountsBackupWithRotation(10); } catch (e) { /* ignore */ }
+      try { createAccountsBackupWithRotation(10); } catch (e) { logWarn('⚠️ createAccountsBackupWithRotation(10) ignorou erro:', e && e.message ? e.message : e); }
     } catch (e) {
       logWarn('Falha ao criar backup pré-salvamento (ignorado):', e.message || e);
     }
@@ -944,7 +1084,7 @@ async function writeAccounts(accountsToSave) {
             if (newCount < existingCount) {
               logWarn(`⚠️ Salvamento irá reduzir contagem de contas: ${existingCount} -> ${newCount}`);
               // Criar backup de segurança extra antes de sobrescrever
-              try { createAccountsBackupWithRotation(20); } catch (e) { /* ignore */ }
+              try { createAccountsBackupWithRotation(20); } catch (e) { logWarn('⚠️ createAccountsBackupWithRotation(20) ignorou erro:', e && e.message ? e.message : e); }
               // Notificar renderer sobre possível perda de contas ao salvar
               try {
                 if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
@@ -2141,12 +2281,17 @@ ipcMain.on('context-menu-closed', () => {
     const activeAccount = accounts.find(acc => acc.active);
     if (activeAccount && !getCurrentBrowserView()) {
       log(`🔄 Recriando BrowserView para conta ativa: ${activeAccount.id}`);
-      const view = createBrowserView(activeAccount.id);
-      browserViews.set(activeAccount.id, view);
-      mainWindow.setBrowserView(view);
-      setTimeout(() => {
-        updateBrowserViewBounds();
-      }, 100);
+      // Do not recreate BrowserView if user requested stop
+      if (automationEngine && automationEngine.stopRequested) {
+        log('🚫 Recriação de BrowserView suprimida: automação parada pelo usuário');
+      } else {
+        const view = createBrowserView(activeAccount.id);
+        browserViews.set(activeAccount.id, view);
+        mainWindow.setBrowserView(view);
+        setTimeout(() => {
+          updateBrowserViewBounds();
+        }, 100);
+      }
     } else {
       updateBrowserViewBounds();
     }
@@ -2162,6 +2307,7 @@ ipcMain.on('context-menu-closed', () => {
 ipcMain.on('close-browser-view-for-add', () => {
   log(`➕ Fechando BrowserView para adição de nova conta`);
   isAddingAccount = true; // BLOQUEAR recriação automática
+  beginTemporaryPause('add-account');
   const activeBrowserView = getCurrentBrowserView();
   if (activeBrowserView) {
     mainWindow.removeBrowserView(activeBrowserView);
@@ -2179,6 +2325,7 @@ ipcMain.on('context-menu-action', async (event, { action, accountId }) => {
       // FECHAR COMPLETAMENTE a BrowserView para evitar sobreposição
       log(`📝 Fechando BrowserView para renomeação da conta ${accountId}`);
       isRenaming = true; // BLOQUEAR recriação automática
+      beginTemporaryPause('rename');
       const activeBrowserView = getCurrentBrowserView();
       if (activeBrowserView) {
         mainWindow.removeBrowserView(activeBrowserView);
@@ -2192,6 +2339,7 @@ ipcMain.on('context-menu-action', async (event, { action, accountId }) => {
       // FECHAR COMPLETAMENTE a BrowserView para evitar sobreposição
       log(`🧹 Fechando BrowserView para limpeza da conta ${accountId}`);
       isClearing = true; // BLOQUEAR recriação automática
+      beginTemporaryPause('clear-session');
       const activeBrowserViewClear = getCurrentBrowserView();
       if (activeBrowserViewClear) {
         mainWindow.removeBrowserView(activeBrowserViewClear);
@@ -2205,6 +2353,7 @@ ipcMain.on('context-menu-action', async (event, { action, accountId }) => {
       // FECHAR COMPLETAMENTE a BrowserView para evitar sobreposição
       log(`🗑️ Fechando BrowserView para remoção da conta ${accountId}`);
       isRemoving = true; // BLOQUEAR recriação automática
+      beginTemporaryPause('remove');
       const activeBrowserViewRemove = getCurrentBrowserView();
       if (activeBrowserViewRemove) {
         mainWindow.removeBrowserView(activeBrowserViewRemove);
@@ -2253,6 +2402,9 @@ ipcMain.handle('add-account', async (event, accountData) => {
     switchToBrowserView(newAccount.id);
     
     log(`✅ Nova conta criada: ${newAccount.name} (${newAccount.id})`);
+  // Liberar flag de adição e encerrar pausa temporária (se houver)
+  isAddingAccount = false;
+  try { endTemporaryPause('add-account'); } catch (e) { logWarn('Erro ao encerrar pausa (add-account):', e); }
     return accounts;
   } catch (error) {
     logError(`❌ Erro ao adicionar conta:`, error);
@@ -2317,20 +2469,25 @@ ipcMain.on('execute-rename', async (event, { accountId, newName }) => {
       log(`✅ Conta ${accountId} renomeada de "${oldName}" para "${newName.trim()}"`);
       
       // LIBERAR recriação da BrowserView após renomear
-      isRenaming = false;
-      log(`🔓 Renomeação concluída - recriação liberada`);
+  isRenaming = false;
+  log(`🔓 Renomeação concluída - recriação liberada`);
+  try { endTemporaryPause('rename'); } catch (e) { logWarn('Erro ao encerrar pausa (rename):', e); }
       
       // Recriar BrowserView após renomear
       const activeAccount = accounts.find(acc => acc.active);
       if (activeAccount && !getCurrentBrowserView() && mainWindow && !mainWindow.isDestroyed()) {
         log(`🔄 Recriando BrowserView após renomeação: ${activeAccount.id}`);
-        const view = createBrowserView(activeAccount.id);
-        if (view) {
-          browserViews.set(activeAccount.id, view);
-          mainWindow.setBrowserView(view);
-          setTimeout(() => {
-            updateBrowserViewBounds();
-          }, 100);
+        if (automationEngine && automationEngine.stopRequested) {
+          log('🚫 Recriação de BrowserView suprimida após renomeação: automação parada pelo usuário');
+        } else {
+          const view = createBrowserView(activeAccount.id);
+          if (view) {
+            browserViews.set(activeAccount.id, view);
+            mainWindow.setBrowserView(view);
+            setTimeout(() => {
+              updateBrowserViewBounds();
+            }, 100);
+          }
         }
       }
     } else {
@@ -2355,20 +2512,25 @@ ipcMain.on('execute-clear-session', async (event, { accountId }) => {
     }
     
     // LIBERAR recriação da BrowserView após limpar
-    isClearing = false;
-    log(`🔓 Limpeza concluída - recriação liberada`);
+  isClearing = false;
+  log(`🔓 Limpeza concluída - recriação liberada`);
+  try { endTemporaryPause('clear-session'); } catch (e) { logWarn('Erro ao encerrar pausa (clear-session):', e); }
     
     // Recriar BrowserView após limpar
     const activeAccount = accounts.find(acc => acc.active);
     if (activeAccount && !getCurrentBrowserView() && mainWindow && !mainWindow.isDestroyed()) {
       log(`🔄 Recriando BrowserView após limpeza: ${activeAccount.id}`);
-      const view = createBrowserView(activeAccount.id);
-      if (view) {
-        browserViews.set(activeAccount.id, view);
-        mainWindow.setBrowserView(view);
-        setTimeout(() => {
-          updateBrowserViewBounds();
-        }, 100);
+      if (automationEngine && automationEngine.stopRequested) {
+        log('🚫 Recriação de BrowserView suprimida após limpeza: automação parada pelo usuário');
+      } else {
+        const view = createBrowserView(activeAccount.id);
+        if (view) {
+          browserViews.set(activeAccount.id, view);
+          mainWindow.setBrowserView(view);
+          setTimeout(() => {
+            updateBrowserViewBounds();
+          }, 100);
+        }
       }
     }
   } catch (error) {
@@ -2425,20 +2587,25 @@ ipcMain.on('execute-remove', async (event, { accountId }) => {
       log(`✅ Conta ${accountId} removida com sucesso`);
       
       // LIBERAR recriação da BrowserView após remover
-      isRemoving = false;
-      log(`🔓 Remoção concluída - recriação liberada`);
+  isRemoving = false;
+  log(`🔓 Remoção concluída - recriação liberada`);
+  try { endTemporaryPause('remove'); } catch (e) { logWarn('Erro ao encerrar pausa (remove):', e); }
       
       // Recriar BrowserView após remover
       const activeAccount = accounts.find(acc => acc.active);
       if (activeAccount && !getCurrentBrowserView() && mainWindow && !mainWindow.isDestroyed()) {
         log(`🔄 Recriando BrowserView após remoção: ${activeAccount.id}`);
-        const view = createBrowserView(activeAccount.id);
-        if (view) {
-          browserViews.set(activeAccount.id, view);
-          mainWindow.setBrowserView(view);
-          setTimeout(() => {
-            updateBrowserViewBounds();
-          }, 100);
+        if (automationEngine && automationEngine.stopRequested) {
+          log('🚫 Recriação de BrowserView suprimida após remoção: automação parada pelo usuário');
+        } else {
+          const view = createBrowserView(activeAccount.id);
+          if (view) {
+            browserViews.set(activeAccount.id, view);
+            mainWindow.setBrowserView(view);
+            setTimeout(() => {
+              updateBrowserViewBounds();
+            }, 100);
+          }
         }
       }
     } else {
@@ -2776,6 +2943,29 @@ ipcMain.handle('get-saved-stats', () => {
 
 const levaProgressFilePath = path.join(userDataPath, 'leva-progress.json');
 
+// Debug: registrar quem escreve/exclui o arquivo leva-progress.json
+function logLevaWrite(action, filePath, levaNumber) {
+  try {
+    const debugPath = path.join(userDataPath, 'leva-writes-debug.log');
+    const entry = {
+      timestamp: new Date().toISOString(),
+      action,
+      filePath,
+      levaNumber: typeof levaNumber !== 'undefined' ? levaNumber : null,
+      stack: (new Error()).stack
+    };
+    try {
+      fs.appendFileSync(debugPath, JSON.stringify(entry) + '\n', 'utf8');
+    } catch (e) {
+      // fallback to console if append fails
+      logWarn('⚠️ Não foi possível escrever debug leva-writes:', e.message || e);
+    }
+  } catch (err) {
+    // não deixar quebrar a execução principal
+    console.error('Erro em logLevaWrite:', err && err.message ? err.message : err);
+  }
+}
+
 // Salvar progresso da leva (quais contas já foram processadas)
 function saveLevaProgress(levaNumber, processedAccountIds, totalAccountsExpected) {
   try {
@@ -2787,6 +2977,8 @@ function saveLevaProgress(levaNumber, processedAccountIds, totalAccountsExpected
     };
     fs.writeFileSync(levaProgressFilePath, JSON.stringify(progress, null, 2));
     log(`💾 Progresso da leva salvo: ${processedAccountIds.length}/${totalAccountsExpected} contas processadas`);
+    // registrar debug para investigar gravações inesperadas
+    try { logLevaWrite('save', levaProgressFilePath, levaNumber); } catch (e) { logWarn('⚠️ logLevaWrite(save) falhou:', e && e.message ? e.message : e); }
   } catch (error) {
     logError('❌ Erro ao salvar progresso da leva:', error);
   }
@@ -2799,6 +2991,7 @@ function loadLevaProgress() {
       const data = fs.readFileSync(levaProgressFilePath, 'utf8');
       const progress = JSON.parse(data);
       log(`📂 Progresso da leva carregado: ${progress.processedAccountIds.length}/${progress.totalAccountsExpected} contas`);
+      try { logLevaWrite('load', levaProgressFilePath, progress.levaNumber); } catch (e) { logWarn('⚠️ logLevaWrite(load) falhou:', e && e.message ? e.message : e); }
       return progress;
     }
     return null;
@@ -2814,9 +3007,41 @@ function clearLevaProgress() {
     if (fs.existsSync(levaProgressFilePath)) {
       fs.unlinkSync(levaProgressFilePath);
       log('🗑️ Progresso da leva limpo');
+      try { logLevaWrite('delete', levaProgressFilePath, null); } catch (e) { logWarn('⚠️ logLevaWrite(delete) falhou:', e && e.message ? e.message : e); }
     }
   } catch (error) {
     logError('❌ Erro ao limpar progresso da leva:', error);
+  }
+}
+
+// Tentar remover cópias espalhadas de leva-progress.json (início do app)
+function removeStrayLevaCopies() {
+  try {
+    const candidates = new Set();
+    candidates.add(levaProgressFilePath);
+    // possíveis caminhos onde cópias possam aparecer (projeto, cwd, app path)
+    try { candidates.add(path.join(process.cwd(), 'leva-progress.json')); } catch (e) { logWarn('⚠️ Falha ao adicionar candidate (cwd):', e && e.message ? e.message : e); }
+    try { candidates.add(path.join(__dirname, '..', 'leva-progress.json')); } catch (e) { logWarn('⚠️ Falha ao adicionar candidate (__dirname):', e && e.message ? e.message : e); }
+    try { candidates.add(path.join(app.getAppPath(), 'leva-progress.json')); } catch (e) { logWarn('⚠️ Falha ao adicionar candidate (app.getAppPath):', e && e.message ? e.message : e); }
+
+    for (const p of Array.from(candidates)) {
+      if (!p) continue;
+      try {
+        if (fs.existsSync(p)) {
+          try {
+            fs.unlinkSync(p);
+            log(`🧹 Removido arquivo stray de progresso: ${p}`);
+            try { logLevaWrite('startup-delete', p, null); } catch (e) { logWarn('⚠️ logLevaWrite(startup-delete) falhou:', e && e.message ? e.message : e); }
+          } catch (e) {
+            logWarn(`⚠️ Não foi possível remover stray file ${p}: ${e.message || e}`);
+          }
+        }
+      } catch (e) {
+        // ignorar erros de permissão/estat
+      }
+    }
+  } catch (err) {
+    logWarn('⚠️ Erro em removeStrayLevaCopies:', err && err.message ? err.message : err);
   }
 }
 
@@ -2932,6 +3157,11 @@ ipcMain.handle('save-report-identification', (event, { name, photoBase64, totalA
 async function generateRealLevaReport(levaAtual, totalAccounts, nicksLoaded) {
   try {
     log(`📊 Gerando relatório REAL da Leva ${levaAtual}...`);
+    // Safety: if user requested stop, abort generating/sending report
+    if (automationEngine && automationEngine.stopRequested) {
+      log('⏹️ Geração de relatório suprimida: automação parada pelo usuário');
+      return { success: false, error: 'Stopped by user' };
+    }
     
     // Buscar webhook e dados de identificação
     const settingsPath = path.join(userDataPath, 'settings.json');
@@ -4355,6 +4585,10 @@ if (!gotTheLock) {
 
 // Eventos do app
 app.whenReady().then(async () => {
+  try {
+    // Remover cópias espalhadas de leva-progress antes de qualquer operação
+    try { removeStrayLevaCopies(); } catch (e) { logWarn('⚠️ removeStrayLevaCopies falhou:', e && e.message ? e.message : e); }
+  } catch (e) { logWarn('⚠️ Erro não tratado ao tentar remover stray leva copies:', e && e.message ? e.message : e); }
   // 🧹 LIMPAR COOKIES ANTIGOS DO HCAPTCHA (SE EXISTIREM)
   try {
     log('🧹 Limpando cookies antigos do hCaptcha...');
@@ -4411,6 +4645,13 @@ app.whenReady().then(async () => {
       }
     } catch (e) {
       logWarn('Erro ao carregar settings.json (ignorado):', e && e.message ? e.message : e);
+    }
+    // FORÇAR escrita atômica em builds de produção: sempre true por segurança
+    try {
+      SAFE_ATOMIC_WRITES = true;
+      log('⚙️ SAFE_ATOMIC_WRITES forçado para: true (durabilidade máxima)');
+    } catch (e) {
+      logWarn('⚠️ Falha ao forçar SAFE_ATOMIC_WRITES:', e && e.message ? e.message : e);
     }
     const accountsPath = path.join(userDataPath, 'accounts.json');
     const partitionsPath = path.join(userDataPath, 'Partitions');
@@ -4837,6 +5078,62 @@ app.whenReady().then(async () => {
           logWarn('⚠️ Erro ao carregar nicks do arquivo persistente:', error);
           log(`🔍 [DEBUG] Erro detalhado: ${error.message}`);
           log(`🔍 [DEBUG] Stack: ${error.stack}`);
+
+          // Attempt automatic recovery from backups if parse failed or file is truncated
+          try {
+            const dir = path.dirname(nicksFilePath);
+            const baseName = path.basename(nicksFilePath);
+            const backups = fs.existsSync(dir)
+              ? fs.readdirSync(dir).filter(f => f.startsWith(baseName + '.backup'))
+              : [];
+
+            backups.sort((a, b) => {
+              try {
+                return fs.statSync(path.join(dir, b)).mtimeMs - fs.statSync(path.join(dir, a)).mtimeMs;
+              } catch (e) { return 0; }
+            });
+
+            let restored = false;
+            for (const backup of backups) {
+              try {
+                const backupPath = path.join(dir, backup);
+                const content = fs.readFileSync(backupPath, 'utf8');
+                const parsedBackup = JSON.parse(content);
+                if (parsedBackup && Array.isArray(parsedBackup.nicks) && parsedBackup.nicks.length > 0) {
+                  // Restore the most recent valid backup
+                  fs.copyFileSync(backupPath, nicksFilePath);
+                  loadedNicks = parsedBackup.nicks || [];
+                  logWarn(`🔄 Restaurado loaded-nicks.json a partir do backup: ${backupPath}`);
+                  restored = true;
+                  break;
+                }
+              } catch (e) {
+                // Try next backup
+                continue;
+              }
+            }
+
+            if (!restored) {
+              // Move corrupt file aside and create empty structure so automation won't choke
+              const corruptPath = nicksFilePath + `.corrupt-${Date.now()}`;
+              try {
+                fs.renameSync(nicksFilePath, corruptPath);
+                logWarn(`🔧 Arquivo de nicks corrompido movido para: ${corruptPath}`);
+              } catch (e) {
+                logWarn('⚠️ Falha ao mover arquivo corrompido de nicks:', e);
+              }
+
+              try {
+                fs.writeFileSync(nicksFilePath, JSON.stringify({ nicks: [], fileName: null, timestamp: Date.now() }, null, 2), 'utf8');
+                logWarn('🆕 Criado loaded-nicks.json vazio como fallback');
+                loadedNicks = [];
+              } catch (e) {
+                logError('❌ Falha ao criar fallback empty loaded-nicks.json:', e);
+              }
+            }
+          } catch (e) {
+            logWarn('⚠️ Tentativa automática de recuperação falhou:', e);
+          }
         }
       } else {
         log(`⚠️ [DEBUG] Arquivo de nicks NÃO EXISTE!`);
@@ -4860,7 +5157,24 @@ app.whenReady().then(async () => {
       const currentLeva = loadLevaCounter();
       
       // Preservar nickIndex atual antes de recriar engine
-      const preservedNickIndex = savedProgress?.currentNickIndex || automationEngine?.currentNickIndex || 0;
+      // Sanitize preserved index: ensure it's a valid number
+      let preservedNickIndex = savedProgress?.currentNickIndex;
+      if (typeof preservedNickIndex !== 'number' || Number.isNaN(preservedNickIndex) || preservedNickIndex < 0) {
+        preservedNickIndex = automationEngine?.currentNickIndex || 0;
+      }
+      if (typeof preservedNickIndex !== 'number' || Number.isNaN(preservedNickIndex)) preservedNickIndex = 0;
+
+      // If loadedNicks exists but the preserved index is beyond its length,
+      // do NOT silently reset it: mark the engine as waiting for new nicks so the user
+      // can load a new list and the automation will resume from the preserved index.
+      let waitingForNicks = false;
+      if (Array.isArray(loadedNicks) && loadedNicks.length === 0) {
+        // No nicks loaded at all
+        waitingForNicks = true;
+      } else if (Array.isArray(loadedNicks) && preservedNickIndex >= loadedNicks.length) {
+        waitingForNicks = true;
+        logWarn('⚠️ preservedNickIndex out-of-bounds for current loadedNicks -> waiting for new list to be loaded');
+      }
       const preservedWebhook = savedProgress?.webhookUrl || automationEngine?.webhookUrl || '';
       
       // Iniciar automação real - PRESERVANDO PROGRESSO!
@@ -4875,9 +5189,12 @@ app.whenReady().then(async () => {
         config: config,
         nicksList: loadedNicks, // ✅ Usar nicks do arquivo persistente
         currentNickIndex: preservedNickIndex, // ✅ Restaurar progresso dos nicks (preservado antes de recriar)
+        waitingForNicks: waitingForNicks,
         webhookUrl: preservedWebhook, // ✅ Restaurar webhook (preservado)
         accountIds: config.accountIds || [], // Array de IDs das contas visíveis
       };
+      // Garantir flag de stop limpa ao iniciar
+      automationEngine.stopRequested = false;
       
       log(`🔍 [DEBUG] automationEngine criado com sucesso!`);
       log(`🔍 [DEBUG] automationEngine.nicksList.length = ${automationEngine.nicksList.length}`);
@@ -4886,12 +5203,20 @@ app.whenReady().then(async () => {
       
       // ✅ Validar se nicks foram carregados (DEPOIS de recriar automationEngine)
       if (!automationEngine.nicksList || automationEngine.nicksList.length === 0) {
-        automationEngine.isRunning = false; // Parar automação
-        log(`❌ [DEBUG] VALIDAÇÃO FALHOU! nicksList = ${automationEngine.nicksList}`);
-        log(`❌ [DEBUG] nicksList length = ${automationEngine.nicksList?.length || 'undefined'}`);
-        throw new Error(
-          '❌ Nenhuma lista de nicks carregada! Clique em "Carregar Nicks" primeiro.'
-        );
+        // If no nicks present, mark waiting and stop the engine so user can load a new list
+        automationEngine.isRunning = false;
+        automationEngine.waitingForNicks = true;
+        log(`❌ [DEBUG] Nenhuma lista de nicks carregada - aguardando que o usuário carregue uma lista`);
+        return { success: false, message: 'Nenhuma lista de nicks carregada. Carregue uma lista para iniciar a automação.' };
+      }
+
+      // If engine is waiting for nicks because preserved index was out-of-bounds, don't start yet
+      if (automationEngine.waitingForNicks) {
+        automationEngine.isRunning = false;
+        log('⚠️ Automação não iniciada: esperando nova lista de nicks que cubra o índice preservado');
+        // Save progress so the preserved index remains stored
+        try { await saveProgress(); } catch (e) { logWarn('Falha ao salvar progresso ao marcar waitingForNicks:', e); }
+        return { success: false, message: 'Índice de progresso atual excede a lista de nicks. Carregue uma nova lista para continuar.' };
       }
       
       log(`✅ [DEBUG] Validação de nicks PASSOU!`);
@@ -4906,9 +5231,23 @@ app.whenReady().then(async () => {
       }
       
   // Iniciar processo de automação
-  // COMPORTAMENTO: aguardar 2s antes de começar para reduzir races na criação de BrowserViews
-  automationLog('⏳ Aguardando 2s antes de iniciar a automação (reduzindo condições de corrida)');
-  await sleep(2000);
+  // COMPORTAMENTO: tentar pré-carregar/attach da BrowserView inicial e reduzir espera
+  automationLog('⏳ Pré-carregando BrowserView inicial e iniciando automação em breve');
+  try {
+    const firstAccountId = automationEngine && Array.isArray(automationEngine.accountIds) ? automationEngine.accountIds[0] : null;
+    if (firstAccountId) {
+      automationLog(`🔧 Pré-carregando BrowserView para conta inicial: ${firstAccountId}`);
+      // Tentar trocar/attach imediatamente para evitar tela cinza
+      try { await switchToAccount(firstAccountId); } catch (e) { logWarn('⚠️ Falha no pré-carregamento da BrowserView:', e && e.message ? e.message : e); }
+      // Pequena espera para estabilizar bounds/render
+      await sleep(300);
+    }
+  } catch (e) {
+    logWarn('⚠️ Erro durante pré-carregamento de BrowserView:', e && e.message ? e.message : e);
+  }
+
+  // Manter uma espera curta (reduzida de 2s para 0.5s) - a view já foi pré-carregada
+  await sleep(500);
   startRealAutomation();
       
       log('✅ Automação REAL iniciada com sucesso');
@@ -4931,14 +5270,94 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle('automation-stop', async () => {
-    log('⏹️ Parando automação...');
-    
-    if (automationEngine) {
-      automationEngine.isRunning = false;
-      automationEngine.isPaused = false;
+    log('⏹️ Parando automação (solicitação do usuário)...');
+
+    try {
+      // Salvar progresso imediatamente
+      try {
+        // Aguarda a gravação atômica terminar para garantir persistência
+        await saveProgress();
+        automationLog('💾 Progresso salvo antes de parar');
+      } catch (e) {
+        logWarn('⚠️ Falha ao salvar progresso durante stop:', e && e.message ? e.message : e);
+      }
+
+      // Garantir que o contador de levas seja resetado em disco mesmo se não houver engine
+      try {
+        saveLevaCounter(1);
+      } catch (e) {
+        logWarn('⚠️ Falha ao salvar contador de levas (pre-reset):', e && e.message ? e.message : e);
+      }
+
+      // Limpar qualquer progresso de leva existente (arquivos e variantes)
+      try {
+        clearLevaProgress();
+        try {
+          const files = fs.readdirSync(userDataPath || '.');
+          files.forEach(f => {
+            if (f && f.startsWith('leva-progress.json')) {
+              const p = path.join(userDataPath, f);
+              if (fs.existsSync(p)) {
+                try { fs.unlinkSync(p); } catch (e) { logWarn('⚠️ Falha ao remover arquivo (ignored):', e && e.message ? e.message : e); }
+              }
+            }
+          });
+        } catch (e) { logWarn('⚠️ Erro ignorado:', e && e.message ? e.message : e); }
+      } catch (e) {
+        logWarn('⚠️ Falha ao limpar arquivos de progresso de leva (pre-reset):', e && e.message ? e.message : e);
+      }
+
+      if (automationEngine) {
+        // Marcar pedido de parada imediata para que loops longos (ex: waitForCaptcha)
+        // possam checar e abortar rapidamente
+        automationEngine.stopRequested = true;
+        automationEngine.isRunning = false;
+        automationEngine.isPaused = false;
+        automationEngine.isPausedByPanel = false;
+      }
+
+      // Garantir que a flag global de execução também seja limpa para permitir reinício
+      try { automationRunning = false; } catch (e) { logWarn('⚠️ Falha ao resetar automationRunning (ignored):', e && e.message ? e.message : e); }
+
+      // Limpar qualquer pausa temporária/watchdog ativa
+      try {
+        if (typeof currentPause !== 'undefined' && currentPause) {
+          endTemporaryPause(currentPause.reason, true);
+        }
+      } catch (e) {
+        logWarn('⚠️ Erro ao encerrar pausa temporária durante stop:', e && e.message ? e.message : e);
+      }
+
+      // Atualizar UI: esconder barra de progresso e notificar renderer
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('progress-hide');
+          mainWindow.webContents.send('automation-log', { message: '⏹️ Automação parada pelo usuário', type: 'info', timestamp: new Date().toISOString() });
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      // Also remove any visible BrowserView so it does not block the UI
+      try {
+        if (mainWindow && mainWindow.getBrowserView()) {
+          const activeView = mainWindow.getBrowserView();
+          mainWindow.removeBrowserView(activeView);
+          log('🔧 BrowserView removida após parada do usuário');
+        }
+      } catch (e) {
+        logWarn('⚠️ Falha ao remover BrowserView durante stop:', e && e.message ? e.message : e);
+      }
+
+      // Renderer notification for 'automation-stopped' removed to avoid
+      // displaying the interactive toast that could trigger auto-resume.
+
+      automationLog('⏹️ Automação parada e progresso salvo.');
+      return { success: true, message: 'Automação parada' };
+    } catch (error) {
+      logError('❌ Erro ao processar stop:', error);
+      return { success: false, message: error.message };
     }
-    
-    return { success: true, message: 'Automação parada' };
   });
 
   ipcMain.handle('automation-status', async () => {
@@ -4950,6 +5369,10 @@ app.whenReady().then(async () => {
       totalInvites: automationEngine ? automationEngine.totalInvitesSent : 0,
     };
   });
+
+  // ipc handler 'automation-resume' removed — UI toast/control was removed
+  // to avoid accidental auto-resume. If manual resume is required, use
+  // the application's dedicated control that calls appropriate logic.
 
   // Handler para selecionar arquivo de nicks
   ipcMain.handle('select-nicks-file', async () => {
@@ -4981,10 +5404,23 @@ app.whenReady().then(async () => {
         // ✅ SALVAR nicks em arquivo persistente (igual ao webhook)
         const nicksFilePath = path.join(userDataPath, 'loaded-nicks.json');
         try {
-          fs.writeFileSync(nicksFilePath, JSON.stringify({ nicks, fileName, timestamp: Date.now() }, null, 2));
-          log(`💾 Nicks salvos em arquivo persistente: ${nicksFilePath}`);
+          // Use fileOps.saveJSON for atomic writes, backups and validation
+          await fileOps.saveJSON(nicksFilePath, { nicks, fileName, timestamp: Date.now() }, {
+            // Prefer overwrite without creating extra backups for loaded-nicks (user expects immediate replace)
+            createBackup: false,
+            validate: true,
+            atomic: SAFE_ATOMIC_WRITES,
+          });
+          log(`💾 Nicks salvos em arquivo persistente (atomic overwrite): ${nicksFilePath}`);
         } catch (error) {
-          logWarn('⚠️ Erro ao salvar nicks em arquivo:', error);
+          logWarn('⚠️ Erro ao salvar nicks em arquivo via fileOps, tentando fallback sync:', error && error.message ? error.message : error);
+          try {
+            fs.writeFileSync(nicksFilePath, JSON.stringify({ nicks, fileName, timestamp: Date.now() }, null, 2));
+            log(`💾 Nicks salvos em arquivo persistente (fallback sync): ${nicksFilePath}`);
+          } catch (err) {
+            logError('❌ Falha ao persistir nicks (fallback também falhou):', err);
+            // Keep going — user will see validation error when starting automation
+          }
         }
         
         // ✅ NOVO: Carregar webhook de settings.json (persistência permanente)
@@ -5007,7 +5443,7 @@ app.whenReady().then(async () => {
         // SAVE TO AUTOMATION ENGINE
         if (automationEngine) {
           automationEngine.nicksList = nicks;
-          automationEngine.currentNickIndex = savedProgress ? savedProgress.currentNickIndex : 0;
+          automationEngine.currentNickIndex = savedProgress ? savedProgress.currentNickIndex : automationEngine.currentNickIndex || 0;
           automationEngine.totalInvitesSent = savedProgress ? savedProgress.totalInvitesSent : 0;
           // ✅ Prioridade MÁXIMA: webhook salvo em settings.json
           automationEngine.webhookUrl = savedWebhook;
@@ -5022,6 +5458,27 @@ app.whenReady().then(async () => {
             );
           }
           log(`🔗 Webhook aplicado: ${automationEngine.webhookUrl ? 'Configurado' : 'Não configurado'}`);
+          // If the engine was waiting for nicks (preserved index out-of-bounds), auto-resume when possible
+          try {
+            if (automationEngine.waitingForNicks && typeof automationEngine.currentNickIndex === 'number') {
+              if (automationEngine.currentNickIndex < automationEngine.nicksList.length) {
+                automationEngine.waitingForNicks = false;
+                log('✅ Nova lista cobre o índice preservado — retomando automação automaticamente');
+                // If engine has a config (was previously configured), start automation
+                if (automationEngine.config && !automationEngine.isRunning) {
+                  automationEngine.isRunning = true;
+                  // Give a small delay to allow renderer updates
+                  setTimeout(() => {
+                    startRealAutomation().catch(e => logError('Erro ao retomar automação automaticamente:', e));
+                  }, 500);
+                }
+              } else {
+                logWarn('🔍 Nova lista ainda não cobre o índice preservado — continue carregando uma lista maior');
+              }
+            }
+          } catch (e) {
+            logWarn('⚠️ Erro ao tentar retomar automação automaticamente:', e);
+          }
         } else {
           // Criar automationEngine se não existir
           const currentLeva = loadLevaCounter(); // ✅ Carregar leva de settings.json
@@ -5045,6 +5502,14 @@ app.whenReady().then(async () => {
               `📂 Progresso restaurado: índice ${savedProgress.currentNickIndex}, ciclo ${savedProgress.currentCiclo}, conta ${savedProgress.currentAccountIndex}`
             );
           }
+        }
+        // Notify renderer about new nicks count
+        try {
+          if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('automation-nicks-status', { count: nicks.length });
+          }
+        } catch (e) {
+          // ignore
         }
         
         return {
@@ -5077,27 +5542,12 @@ app.whenReady().then(async () => {
     mainWindow.webContents.send('close-automation-tab');
   });
 
-  // Funções de persistência de progresso
+  // Funções de persistência de progresso (wrapper para salvar de forma atômica)
   function saveProgress() {
-    try {
-      if (!automationEngine) return;
-      
-      const progress = {
-        currentNickIndex: automationEngine.currentNickIndex,
-        totalInvitesSent: automationEngine.totalInvitesSent,
-        lastUpdate: new Date().toISOString(),
-        webhookUrl: automationEngine.webhookUrl || '',
-        currentCiclo: automationEngine.currentCiclo || 1,
-        currentAccountIndex: automationEngine.currentAccountIndex || 0,
-      };
-      
-      fs.writeFileSync(progressFilePath, JSON.stringify(progress, null, 2));
-      log(
-        `💾 Progresso salvo: índice ${progress.currentNickIndex}, ciclo ${progress.currentCiclo}, conta ${progress.currentAccountIndex}`
-      );
-    } catch (error) {
-      logError('❌ Erro ao salvar progresso:', error);
-    }
+    // Retornar a promise para permitir await quando necessário
+    return saveProgressAtomic().catch(error => {
+      logError('❌ Erro ao salvar progresso (atomic fallback):', error);
+    });
   }
 
   function loadProgress() {
@@ -5114,7 +5564,9 @@ app.whenReady().then(async () => {
     return null;
   }
 
-  function resetProgress() {
+  async function resetProgress() {
+    // Marcar que um reset está em andamento para prevenir sobrescritas concorrentes
+    resetInProgress = true;
     try {
       // ✅ Carregar webhook de settings.json (persistência permanente)
       const settingsPath = path.join(userDataPath, 'settings.json');
@@ -5135,58 +5587,141 @@ app.whenReady().then(async () => {
         automationEngine.currentCiclo = 1;
         automationEngine.currentAccountIndex = 0;
         automationEngine.totalInvitesSent = 0;
-        
-        // ✅ Resetar contador de levas para 1/6
-        saveLevaCounter(1);
+
+        // ✅ Resetar contador de levas para 1/6 (persistente)
         automationEngine.currentLeva = 1;
-        
+        try {
+          saveLevaCounter(1);
+        } catch (e) {
+          logWarn('⚠️ Falha ao salvar contador de levas durante reset:', e && e.message ? e.message : e);
+        }
+
         // ✅ Limpar progresso da leva (múltiplas páginas)
-        clearLevaProgress();
-        
+        try {
+          clearLevaProgress();
+          // Também remover quaisquer arquivos temporários relacionados, se existirem
+          try {
+            const files = fs.readdirSync(userDataPath || '.');
+            files.forEach(f => {
+              if (f && f.startsWith('leva-progress.json')) {
+                const p = path.join(userDataPath, f);
+                if (fs.existsSync(p)) {
+                  try { fs.unlinkSync(p); } catch (e) { logWarn('⚠️ Falha ao remover arquivo (ignored):', e && e.message ? e.message : e); }
+                }
+              }
+            });
+          } catch (e) {
+            // ignore
+          }
+        } catch (e) {
+          logWarn('⚠️ Falha ao limpar progresso da leva durante reset:', e && e.message ? e.message : e);
+        }
+
         // ✅ Limpar estatísticas incrementais
-        clearIncrementalStats();
-        
+        try { clearIncrementalStats(); } catch (e) { logWarn('⚠️ clearIncrementalStats ignorou erro:', e && e.message ? e.message : e); }
+
         // ✅ MANTER: currentNickIndex (progresso dos nicks)
         // ✅ GARANTIR: webhook de settings.json (não do engine antigo)
         automationEngine.webhookUrl = savedWebhook;
-        
-        // Salvar progresso atualizado
-        saveProgress();
-        
+
+        // Salvar progresso atualizado e aguardar conclusão
+        try {
+          await saveProgress();
+        } catch (e) {
+          logWarn('⚠️ Falha ao salvar progresso durante reset (não crítico):', e && e.message ? e.message : e);
+        }
+
         log('🔄 Ciclos e levas resetados - voltando para Ciclo 1/4, Leva 1/6');
         log('🗑️ Progresso de múltiplas páginas limpo');
         log(
           `📌 Progresso de nicks MANTIDO: Nick ${automationEngine.currentNickIndex + 1}/${automationEngine.nicksList?.length || 0}`
         );
         log(`🔗 Webhook mantido de settings.json: ${savedWebhook ? 'Configurado' : 'Não configurado'}`);
-        
-        return { 
-          success: true, 
+
+        return {
+          success: true,
           message: `Ciclos e levas resetados! Voltando para Ciclo 1/4, Leva 1/6.\nProgresso de nicks mantido: Nick ${automationEngine.currentNickIndex + 1}`,
           webhookUrl: savedWebhook,
           currentNickIndex: automationEngine.currentNickIndex,
           totalInvitesSent: automationEngine.totalInvitesSent,
           currentCiclo: 1,
-          currentLeva: 1
+          currentLeva: 1,
         };
       }
       
-      // Se não tem automationEngine, resetar arquivo completamente
+      // Se não tem automationEngine, resetar arquivo completamente e gravar progresso padrão
       if (fs.existsSync(progressFilePath)) {
-        fs.unlinkSync(progressFilePath);
+        try { fs.unlinkSync(progressFilePath); } catch (e) { logWarn('⚠️ Falha ao remover progressFilePath:', e && e.message ? e.message : e); }
         log('🔄 Progresso resetado (nenhuma automação ativa)');
+      }
+
+      // Garantir que exista um arquivo de progresso consistente refletindo Leva 1
+      try {
+        const defaultProgress = {
+          currentNickIndex: 0,
+          totalInvitesSent: 0,
+          lastUpdate: new Date().toISOString(),
+          webhookUrl: savedWebhook || null,
+          currentCiclo: 1,
+          currentAccountIndex: 0,
+          currentLeva: 1
+        };
+        fs.writeFileSync(progressFilePath, JSON.stringify(defaultProgress, null, 2));
+        log('💾 Arquivo de progresso inicial criado/atualizado com Leva 1');
+      } catch (e) {
+        logWarn('⚠️ Falha ao criar/atualizar arquivo de progresso padrão:', e && e.message ? e.message : e);
+      }
+      // Também tentar remover cópias em outros diretórios possíveis (repo, cwd, app path)
+      try {
+        const altPaths = [
+          path.join(process.cwd(), 'leva-progress.json'),
+          path.join(__dirname, '..', 'leva-progress.json'),
+          path.join(app.getAppPath ? app.getAppPath() : __dirname, 'leva-progress.json')
+        ];
+        altPaths.forEach(p => {
+          try {
+            if (p && fs.existsSync(p)) {
+              fs.unlinkSync(p);
+              log(`🗑️ Removido leva-progress em: ${p}`);
+            }
+          } catch (e) { logWarn('⚠️ Erro ignorado dentro do fluxo:', e && e.message ? e.message : e); }
+        });
+      } catch (e) {
+        logWarn('⚠️ Falha ao remover cópias alternativas de leva-progress:', e && e.message ? e.message : e);
+      }
+      // Escrever explicitamente settings.json com levaAtual = 1 para garantir persistência
+      try {
+        const settingsPath = path.join(userDataPath, 'settings.json');
+        let settings = {};
+        if (fs.existsSync(settingsPath)) {
+          try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch (e) { settings = {}; }
+        }
+        settings.levaAtual = 1;
+        settings.lastUpdated = Date.now();
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+        log('💾 settings.json atualizado: levaAtual = 1');
+      } catch (e) {
+        logWarn('⚠️ Falha ao escrever settings.json durante reset:', e && e.message ? e.message : e);
       }
       
       return { success: true, message: 'Progresso resetado com sucesso', webhookUrl: savedWebhook };
     } catch (error) {
       logError('❌ Erro ao resetar progresso:', error);
       return { success: false, message: error.message };
+    } finally {
+      // Limpar a flag para permitir gravações normais novamente
+      resetInProgress = false;
     }
   }
 
   // Handler para resetar progresso
   ipcMain.handle('reset-automation-progress', async () => {
-    return resetProgress();
+    try {
+      return await resetProgress();
+    } catch (e) {
+      logError('❌ Erro no handler reset-automation-progress:', e && e.message ? e.message : e);
+      return { success: false, message: e && e.message ? e.message : 'Erro desconhecido' };
+    }
   });
   // NOTE: panel-opened / panel-closed handlers removed — pause-by-panel behavior deprecated.
   
@@ -5369,11 +5904,40 @@ app.whenReady().then(async () => {
   
   // Função auxiliar para delays aleatórios (comportamento humano)
   function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    // Delay interruptible: resolve early if user requested stop (automationEngine.stopRequested)
+    return new Promise(resolve => {
+      try {
+        const step = Math.min(100, Math.max(20, Math.floor(ms / 10)));
+        let elapsed = 0;
+        const timer = setInterval(() => {
+          elapsed += step;
+          if ((automationEngine && automationEngine.stopRequested) || elapsed >= ms) {
+            clearInterval(timer);
+            resolve();
+          }
+        }, step);
+      } catch (e) {
+        // Fallback simples
+        setTimeout(resolve, ms);
+      }
+    });
   }
   
   function randomDelay(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  // Helper seguro para executar JS na BrowserView que retorna null imediatamente
+  // se a automação foi solicitada a parar (stopRequested).
+  async function safeExecuteJS(view, code) {
+    try {
+      if (!view || !view.webContents) return null;
+      if (automationEngine && automationEngine.stopRequested) return null;
+      return await view.webContents.executeJavaScript(code);
+    } catch (e) {
+      logWarn('⚠️ safeExecuteJS erro:', e && e.message ? e.message : e);
+      return null;
+    }
   }
 
   // Aguardar até que a BrowserView associada a uma conta tenha carregado
@@ -6057,6 +6621,42 @@ app.whenReady().then(async () => {
       }
       
       sendProgressUpdate(startCiclo, savedAccountIndex, groupAccounts.length);
+
+      // ===== CHECAGEM PREVENTIVA DE NICKS (evitar acabar no meio da leva) =====
+      try {
+        const totalAccounts = groupAccounts.length || 0;
+        // contas faltando no ciclo atual
+        const remainingAccountsInCurrentCycle = totalAccounts - (savedAccountIndex || 0);
+        const cyclesRemainingAfterCurrent = 4 - (startCiclo || 1);
+        const nicksNeeded = Math.max(0, remainingAccountsInCurrentCycle) + Math.max(0, cyclesRemainingAfterCurrent) * totalAccounts;
+        const availableNicks = (automationEngine && Array.isArray(automationEngine.nicksList))
+          ? Math.max(0, automationEngine.nicksList.length - (automationEngine.currentNickIndex || 0))
+          : 0;
+
+        automationLog(`🔎 Checagem preventiva: nicksNeeded=${nicksNeeded}, availableNicks=${availableNicks}`, 'info');
+
+        if (availableNicks < nicksNeeded) {
+          // Não iniciar - marcar waitingForNicks e registrar no painel
+          if (automationEngine) {
+            automationEngine.waitingForNicks = true;
+            automationEngine.isRunning = false;
+          }
+          automationLog(`⚠️ Lista insuficiente para completar a leva. Faltam ${nicksNeeded - availableNicks} nicks. Carregue mais nicks para retomar.`, 'warn');
+          // Atualizar renderer via log/event
+          if (mainWindow && mainWindow.webContents) {
+            mainWindow.webContents.send('automation-log', {
+              message: `⚠️ Lista insuficiente para completar a leva. Faltam ${nicksNeeded - availableNicks} nicks. Carregue mais nicks para retomar.`,
+              type: 'warn',
+              timestamp: new Date().toISOString(),
+            });
+          }
+          // Salvar progresso para manter estado
+          try { saveProgress(); } catch (e) { logWarn('Falha ao salvar progresso após checagem preventiva:', e); }
+          return; // Parar execução de startRealAutomation
+        }
+      } catch (e) {
+        logWarn('⚠️ Erro ao executar checagem preventiva de nicks:', e);
+      }
       
       // Enviar atualização de status para o painel
       if (mainWindow && mainWindow.webContents) {
@@ -6224,6 +6824,29 @@ app.whenReady().then(async () => {
               continue;
             }
             
+            // IMMEDIATE ERROR CHECK: muito rápido para capturar popups/layouts diferentes
+            try {
+              const immediate = await checkImmediateErrorAndCapture(account.name, currentNick);
+              if (immediate && immediate.found) {
+                automationLog(`⚠️ Erro imediato detectado após clicar: ${immediate.error} - pulando conta`);
+                // Tratar como erro 'notAccepting' se texto indicar isso
+                const errType = (String(immediate.error || '').indexOf('not accepting') >= 0 || String(immediate.error || '').indexOf('não aceita') >= 0) ? 'notAcceptingFriends' : 'other';
+                automationEngine.currentNickIndex++;
+                automationEngine.totalInvitesSent++;
+                saveProgress();
+                recordAccountPerformance(account.name, false, errType, immediate.error);
+                automationErrorCount++;
+                saveIncrementalStats();
+                sendProgressUpdate(ciclo, accountIndex, totalAccounts);
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  mainWindow.webContents.send('stats-update', { success: false, error: true, totalAccounts, maxInvites: totalAccounts * 4 });
+                }
+                continue;
+              }
+            } catch (e) {
+              logWarn('Erro no checkImmediateErrorAndCapture:', e && e.message ? e.message : e);
+            }
+
             // Aguardar se pausado
             await waitWhilePaused();
             
@@ -6615,6 +7238,18 @@ app.whenReady().then(async () => {
         
         automationLog(`\n🎉 ===== LEVA ${levaNumeroCompleto}/6 COMPLETA! =====`);
         automationLog(`✅ Todas as ${levaProgress.totalAccountsExpected} contas foram processadas!`);
+
+        // If user requested stop meanwhile, do not run finalization (report/webhook/leve increment)
+        if (automationEngine && automationEngine.stopRequested) {
+          automationLog('⏹️ Finalização de leva suprimida: parada do usuário detectada');
+          // Ensure progress and stats are saved, hide progress UI and stop engine
+          try { saveProgress(); } catch (e) { logWarn('⚠️ Falha ao salvar progresso durante supressão de finalização:', e && e.message ? e.message : e); }
+          try { automationEngine.isRunning = false; } catch (e) { logWarn('⚠️ Falha ao marcar automationEngine.isRunning=false durante supressão:', e && e.message ? e.message : e); }
+          try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('progress-hide'); } catch (e) { logWarn('⚠️ Falha ao enviar progress-hide ao renderer durante supressão:', e && e.message ? e.message : e); }
+          // Skip the rest of the completion steps and exit this automation run
+          // Reset running flag will be handled by the outer finally block
+          return;
+        }
         
         // ✅ GERAR E ENVIAR RELATÓRIO PDF
         automationLog(`📊 Gerando relatório da Leva ${levaNumeroCompleto}...`);
@@ -6632,9 +7267,16 @@ app.whenReady().then(async () => {
         
         // Agora incrementar leva e limpar dados
         const newLeva = incrementLeva();
+        // Atualizar a engine em memória e persistir imediatamente
+        try {
+          if (automationEngine) {
+            automationEngine.currentLeva = newLeva;
+          }
+        } catch (e) { logWarn('⚠️ Erro ignorado:', e && e.message ? e.message : e); }
         clearLevaProgress(); // Limpar progresso para próxima leva
         clearIncrementalStats(); // ✅ Limpar estatísticas incrementais (leva completa)
-        
+        try { await saveProgress(); } catch (e) { logWarn('⚠️ Falha ao salvar progresso após incrementar leva:', e && e.message ? e.message : e); }
+
         automationLog(`🎯 Próxima leva: ${newLeva}/6`);
         
         if (currentLevaNum >= 6) {
@@ -6795,6 +7437,25 @@ app.whenReady().then(async () => {
         await switchToBrowserView(accountId);
       }
       
+      // FORÇAR A EXISTÊNCIA/ATTACH IMEDIATA DA BrowserView se não existir
+      try {
+        let view = browserViews.get(accountId);
+        if (!view || (view.webContents && view.webContents.isDestroyed && view.webContents.isDestroyed())) {
+          automationLog(`🔧 BrowserView ausente ou destruída para ${accountId} - forçando criação/attach`);
+          try {
+            view = createBrowserView(accountId);
+            browserViews.set(accountId, view);
+            // Attachar imediatamente para garantir que renderer e main estejam sincronizados
+            mainWindow.setBrowserView(view);
+            updateBrowserViewBounds();
+          } catch (e) {
+            logWarn('⚠️ Falha ao forçar criação da BrowserView:', e);
+          }
+        }
+      } catch (e) {
+        logWarn('⚠️ Erro ao verificar/forçar BrowserView:', e);
+      }
+
       // AGUARDAR ATÉ QUE A BrowserView CARREGUE (ou timeout)
       let viewLoaded = await waitForBrowserViewLoad(accountId, 8000);
 
@@ -6823,6 +7484,42 @@ app.whenReady().then(async () => {
         // Aguardar um pouco e tentar de novo
         await sleep(300);
         viewLoaded = await waitForBrowserViewLoad(accountId, 8000);
+
+        // Se ainda não carregou, tentar um reload no webContents (pode recuperar sessões travadas)
+        if (!viewLoaded) {
+          try {
+            const view = browserViews.get(accountId);
+            if (view && view.webContents && !view.webContents.isDestroyed()) {
+              automationLog(`🔄 Tentando reload do webContents para ${accountId}`);
+              try { view.webContents.reload(); } catch (e) { logWarn('⚠️ reload falhou:', e); }
+              await sleep(500);
+              viewLoaded = await waitForBrowserViewLoad(accountId, 8000);
+            }
+          } catch (e) {
+            logWarn('⚠️ Erro ao tentar reload do webContents:', e);
+          }
+        }
+
+        // Se ainda não carregou após reload, recriar a view (destroy + create) e tentar uma última vez
+        if (!viewLoaded) {
+          automationLog(`⚠️ Fallback reload falhou - recriando BrowserView para ${accountId}`);
+          try {
+            const oldView = browserViews.get(accountId);
+            if (oldView) {
+              try { mainWindow.removeBrowserView(oldView); } catch (e) { logWarn('⚠️ Falha ao remover BrowserView (ignored):', e && e.message ? e.message : e); }
+              try { if (oldView.webContents && !oldView.webContents.isDestroyed()) oldView.webContents.destroy(); } catch (e) { logWarn('⚠️ Falha ao destruir webContents (ignored):', e && e.message ? e.message : e); }
+              browserViews.delete(accountId);
+            }
+            const newView = createBrowserView(accountId);
+            browserViews.set(accountId, newView);
+            mainWindow.setBrowserView(newView);
+            updateBrowserViewBounds();
+            await sleep(300);
+            viewLoaded = await waitForBrowserViewLoad(accountId, 8000);
+          } catch (e) {
+            logWarn('⚠️ Falha ao recriar BrowserView:', e);
+          }
+        }
 
         // Se ainda não carregou, forçar attach via switchToBrowserView e tentar mais uma vez
         if (!viewLoaded) {
@@ -7129,7 +7826,7 @@ app.whenReady().then(async () => {
       }
       
       // ✅ TIMEOUT: Se não responder em 12s, aborta
-      const clickPromise = currentView.webContents.executeJavaScript(`
+      const clickPromise = safeExecuteJS(currentView, `
         (async function() {
           try {
             // Tentar até 10 vezes (10 segundos) aguardar botão habilitar
@@ -7193,7 +7890,13 @@ app.whenReady().then(async () => {
   
   // Função helper para aguardar até que a pausa seja liberada
   async function waitWhilePaused() {
+    // Espera breve enquanto o painel pausa a automação.
+    // Também retorna imediatamente se houver pedido de parada (stopRequested) ou se a engine não estiver rodando.
     while (automationEngine && automationEngine.isPausedByPanel) {
+      if (automationEngine.stopRequested || !automationEngine.isRunning) {
+        // Interromper espera se stop foi requisitado
+        break;
+      }
       await sleep(500); // Verificar a cada 500ms
     }
   }
@@ -7256,31 +7959,35 @@ app.whenReady().then(async () => {
         automationLog(`💾 Screenshot salvo localmente: ${path.basename(screenshotPath)}`);
         automationLog(`📋 Erro registrado e será incluído no relatório PDF final`);
         
-        // ✅ Enviar screenshot para webhook em tempo real
+        // ✅ Enviar screenshot para webhook em tempo real (fire-and-forget)
         try {
           const settingsPath = path.join(userDataPath, 'settings.json');
           if (fs.existsSync(settingsPath)) {
             const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
             if (settings.webhookUrl) {
-              const axios = require('axios');
-              const FormData = require('form-data');
-              
-              const form = new FormData();
-              form.append('file', buffer, `erro_${accountName}_${timestamp}.png`);
-              form.append('content', `🛠️ **Erro durante automação**\n\n👤 **Conta:** ${accountName}\n🎯 **Nick:** ${targetNick}\n⚠️ **Erro:** ${errorMessage}\n📷 Screenshot anexada`);
-              
-              await axios.post(settings.webhookUrl, form, {
-                headers: form.getHeaders(),
-                maxContentLength: Infinity,
-                maxBodyLength: Infinity,
-              });
-              
-              automationLog(`📤 Screenshot enviada para webhook`);
+              // Fire-and-forget: não bloquear o fluxo principal aguardando o POST
+              (async () => {
+                try {
+                  const axios = require('axios');
+                  const FormData = require('form-data');
+                  const form = new FormData();
+                  form.append('file', buffer, `erro_${accountName}_${timestamp}.png`);
+                  form.append('content', `🛠️ **Erro durante automação**\n\n👤 **Conta:** ${accountName}\n🎯 **Nick:** ${targetNick}\n⚠️ **Erro:** ${errorMessage}\n📷 Screenshot anexada`);
+                  await axios.post(settings.webhookUrl, form, {
+                    headers: form.getHeaders(),
+                    maxContentLength: Infinity,
+                    maxBodyLength: Infinity,
+                    timeout: 15000
+                  });
+                  automationLog(`📤 Screenshot enviada para webhook (background)`);
+                } catch (webhookError) {
+                  logWarn('⚠️ Erro ao enviar screenshot para webhook (background):', webhookError && webhookError.message ? webhookError.message : webhookError);
+                }
+              })();
             }
           }
-        } catch (webhookError) {
-          logError('⚠️ Erro ao enviar screenshot para webhook:', webhookError);
-          // Não falhar a função se o webhook falhar
+        } catch (webhookPrepError) {
+          logWarn('⚠️ Falha ao preparar envio para webhook (não bloqueante):', webhookPrepError && webhookPrepError.message ? webhookPrepError.message : webhookPrepError);
         }
         
         return true;
@@ -7294,6 +8001,101 @@ app.whenReady().then(async () => {
       return false;
     }
   }
+
+  // Quick immediate error check executed right after clicking 'Send Friend Request'
+  // Returns an object { found: boolean, error: string, needsScreenshot: boolean }
+  async function checkImmediateErrorAndCapture(accountName, targetNick) {
+    try {
+      const currentView = getCurrentBrowserView();
+      if (!currentView || !currentView.webContents) return { found: false };
+
+  // Fazer uma ultra-rápida janela de polling (3 tentativas de ~80-120ms = ~300ms)
+  const maxAttempts = 3; // alvo <~300ms
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+          const result = await safeExecuteJS(currentView, `
+            (function(){
+              try {
+                const checks = [];
+                const modal = document.querySelector('div[role="dialog"][aria-modal="true"]');
+                if (modal) checks.push(modal.textContent || '');
+
+                const inlineSelectors = [
+                  'div[role="alert"]',
+                  'div[class*="marginTop8"]',
+                  'div[class*="headerSubtitle"]',
+                  'div[class*="text-sm"]',
+                  'p',
+                  'span'
+                ];
+                for (const s of inlineSelectors) {
+                  const els = document.querySelectorAll(s);
+                  for (let i=0;i<els.length;i++) checks.push(els[i].textContent||'');
+                }
+
+                checks.push(document.body && document.body.textContent ? document.body.textContent : '');
+                const text = checks.join('\n').toLowerCase();
+
+                const patterns = [
+                  'not accepting', 'not accepting friend', 'is not accepting',
+                  'não aceita', 'não aceita pedidos', 'pedido de amizade',
+                  'friend request failed', "didn't work", 'hm,', 'double-check',
+                  'username is correct', 'user not found'
+                ];
+
+                for (const p of patterns) {
+                  if (text.indexOf(p) >= 0) {
+                    const needsScreenshot = !!modal || p.indexOf('didn')>=0 || p.indexOf('hm,')>=0;
+                    return { found: true, error: p, needsScreenshot };
+                  }
+                }
+
+                return { found: false };
+              } catch (e) { return { found: false }; }
+            })();
+          `);
+
+          if (result && result.found) {
+            // Capturar screenshot primeiro se necessário
+            if (result.needsScreenshot) {
+              await captureAndSendError(accountName, targetNick, result.error || 'Erro detectado');
+            }
+
+            // Tentar fechar modal/popups imediatamente (não bloquear se falhar)
+            try {
+              await currentView.webContents.executeJavaScript(`
+                (function(){
+                  try {
+                    const modal = document.querySelector('div[role="dialog"][aria-modal="true"]');
+                    if (modal) {
+                      const ok = Array.from(modal.querySelectorAll('button')).find(b=>/ok|okay|fechar|close/i.test(b.textContent||''));
+                      if (ok) { ok.click(); return true; }
+                    }
+                    const alertBtn = Array.from(document.querySelectorAll('button')).find(b=>/ok|okay|fechar|close/i.test(b.textContent||''));
+                    if (alertBtn) { alertBtn.click(); return true; }
+                    return false;
+                  } catch(e){ return false; }
+                })();
+              `);
+            } catch (e) { logWarn('⚠️ Erro ignorado:', e && e.message ? e.message : e); }
+
+            return { found: true, error: result.error };
+          }
+        } catch (err) {
+          // Se houve erro ao executar JS, continuar tentando rapidamente
+          logWarn('checkImmediateErrorAndCapture JS attempt error:', err && err.message ? err.message : err);
+        }
+
+        // Pequena espera antes da próxima tentativa (rápida ~90ms)
+        await sleep(90);
+      }
+
+      return { found: false };
+    } catch (e) {
+      logWarn('checkImmediateErrorAndCapture erro:', e && e.message ? e.message : e);
+      return { found: false };
+    }
+  }
   
   async function waitForCaptcha(targetNick = 'Desconhecido', accountName = 'Desconhecida', webhookUrl = '') {
     automationLog(`🤖 Detectando e aguardando captcha...`);
@@ -7304,8 +8106,8 @@ app.whenReady().then(async () => {
         throw new Error('BrowserView não encontrada');
       }
       
-      // Aguardar um pouco para elementos carregarem
-      await sleep(500);
+  // Aguardar um pouquíssimo tempo para elementos carregarem (rápido)
+  await sleep(200);
       
       // Aguardar mensagem de SUCESSO ou ERRO aparecer
       
@@ -7317,17 +8119,25 @@ app.whenReady().then(async () => {
       const maxAttempts = 99999; // Aguardar indefinidamente até captcha ser resolvido
       
       while (!responseReceived && attempts < maxAttempts) {
-        await sleep(500); // Verificar 2x por segundo
+  // Poll faster initially (150ms) for first ~3s to capture immediate errors/layouts
+  const sleepTime = attempts < 20 ? 150 : 450;
+        await sleep(sleepTime);
         attempts++;
-        
-        // Log de debug a cada 15 segundos (REDUZIDO - OTIMIZAÇÃO)
-        if (attempts % 30 === 0) {
-          const seconds = Math.floor(attempts / 2);
+
+        // Log de debug periódico (mais granular nos primeiros 10s)
+        if (attempts % (sleepTime === 200 ? 10 : 30) === 0) {
+          const seconds = Math.floor((attempts * sleepTime) / 1000);
           automationLog(`🔍 Verificando resposta... (${seconds}s)`, 'info');
         }
         
+        // If stop was requested, abort waiting immediately
+        if (automationEngine && automationEngine.stopRequested) {
+          automationLog('⏹️ waitForCaptcha abortado por pedido de STOP');
+          return { success: false, error: 'stopped' };
+        }
+
         // Verificar se mensagem de sucesso ou erro apareceu (SELETORES EXATOS)
-        const result = await currentView.webContents.executeJavaScript(`
+        const result = await safeExecuteJS(currentView, `
           (function() {
             try {
               console.log('[CAPTCHA-DEBUG] ===== VERIFICAÇÃO INICIADA =====');
@@ -7463,7 +8273,7 @@ app.whenReady().then(async () => {
           })();
         `);
         
-        if (result.resolved) {
+  if (result && result.resolved) {
           responseReceived = true;
           
           automationLog(`📊 [DEBUG] Resultado detectado após ${Math.floor(attempts / 2)}s`);
@@ -7532,9 +8342,9 @@ app.whenReady().then(async () => {
                 })();
               `);
 
-              // Aguardar popup fechar
-              await sleep(1500);
-              automationLog(`✅ Screenshot enviado e popup fechado - continuando automação...`);
+              // Aguardar popup fechar (muito curto - não precisamos bloquear longamente)
+              await sleep(120);
+              automationLog(`✅ Screenshot enviado e popup fechado (rápido) - continuando automação...`);
             }
 
             return {
@@ -7573,7 +8383,7 @@ app.whenReady().then(async () => {
       }
       
       // Verificar se modal de erro apareceu
-      const errorCheck = await currentView.webContents.executeJavaScript(`
+      const errorCheck = await safeExecuteJS(currentView, `
         (function() {
           try {
             // Procurar por modal de erro
@@ -7600,7 +8410,7 @@ app.whenReady().then(async () => {
         })();
       `);
       
-      if (errorCheck.hasError) {
+  if (errorCheck && errorCheck.hasError) {
         automationLog(`⚠️ ERRO DETECTADO: ${errorCheck.message}`);
         
         // Fechar modal de erro clicando no botão "Okay"
@@ -7664,6 +8474,14 @@ app.whenReady().then(async () => {
       createWindow();
     }
   });
+  // Expor startRealAutomation globalmente para listeners externos
+  try {
+    if (typeof startRealAutomation === 'function') {
+      global.startRealAutomation = startRealAutomation;
+    }
+  } catch (e) {
+    logWarn('⚠️ Falha ao expor startRealAutomation globalmente:', e && e.message ? e.message : e);
+  }
 });
 
 app.on('window-all-closed', async () => {
@@ -7711,7 +8529,7 @@ app.on('before-quit', async event => {
    // Criar backup imediato antes das tentativas de salvamento final
    try {
      createAccountsBackup();
-     try { createAccountsBackupWithRotation(10); } catch (e) { /* ignore */ }
+    try { createAccountsBackupWithRotation(10); } catch (e) { logWarn('⚠️ createAccountsBackupWithRotation(10) ignorou erro:', e && e.message ? e.message : e); }
    } catch (e) {
      logWarn('Falha ao criar backup imediato antes de sair (ignorado):', e.message || e);
    }
@@ -7805,4 +8623,22 @@ app.on('web-contents-created', (event, contents) => {
     event.preventDefault();
     require('electron').shell.openExternal(navigationUrl);
   });
+});
+
+// Listener interno registrado no final do arquivo para reiniciar automação
+process.on('resume-automation', () => {
+  try {
+    const fn = global.startRealAutomation;
+    if (typeof fn === 'function') {
+      try {
+        setImmediate(fn);
+      } catch (e) {
+        setTimeout(fn, 0);
+      }
+    } else {
+      logWarn('resume-automation recebido mas startRealAutomation não está definido (global não definido)');
+    }
+  } catch (e) {
+    logWarn('Erro no listener interno de resume-automation:', e && e.message ? e.message : e);
+  }
 });

@@ -47,6 +47,7 @@ const contextMenu = document.getElementById('context-menu');
 // Automação elements
 const automationBtn = document.getElementById('automation-btn');
 const automationTab = document.getElementById('automation-tab');
+// Automation pause/resume toast UI removed (was causing auto-resume issues)
 const debugBtn = document.getElementById('debug-btn');
 
 // Verificar múltiplos botões
@@ -130,6 +131,9 @@ function initTitleBar() {
     }, 150);
   });
 }
+
+// Listeners para eventos de automação do main
+// Automation pause/resume/stopped events suppressed in renderer
 
 // Calcular contas por página baseado na resolução
 function calculateAccountsPerPage() {
@@ -4193,6 +4197,38 @@ if (window.electron) {
       while (logContainer.children.length > 100) {
         logContainer.removeChild(logContainer.firstChild);
       }
+    }
+  });
+
+  // Listener para atualização do número de nicks persistidos
+  window.electron.on('automation-nicks-status', data => {
+    try {
+      const count = data && typeof data.count === 'number' ? data.count : 0;
+      const statNicksLoaded = document.getElementById('stat-nicks-loaded');
+      if (statNicksLoaded) statNicksLoaded.textContent = count;
+
+      // Decide whether to disable Start button based on visible accounts
+      const visibleCount = getVisibleAccountIds().length;
+      if (count === 0 || count < visibleCount) {
+        // Grey-out / disable Start button
+        if (startAutomationBtn) {
+          startAutomationBtn.disabled = true;
+          startAutomationBtn.style.opacity = '0.6';
+          startAutomationBtn.title = 'Nicks insuficientes — carregue mais nicks antes de iniciar.';
+        }
+
+        // Show a red toast (hover-to-dismiss supported by showNotification)
+        const verb = count === 0 ? 'Nenhum nick disponível' : `${count} disponível(s) para ${visibleCount} conta(s) visíveis`;
+        showNotification(`❌ Nicks insuficientes: ${verb}. Carregue mais nicks.`, 'error', 8000);
+      } else {
+        if (startAutomationBtn) {
+          startAutomationBtn.disabled = false;
+          startAutomationBtn.style.opacity = '';
+          startAutomationBtn.title = '';
+        }
+      }
+    } catch (e) {
+      console.error('Erro ao processar automation-nicks-status:', e);
     }
   });
 }
