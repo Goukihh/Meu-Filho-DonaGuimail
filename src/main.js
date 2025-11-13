@@ -7453,11 +7453,12 @@ app.whenReady().then(async () => {
         automationLog(`💾 Estatísticas salvas: ${totalInvites} convites, ${elapsedText}, ${rate}/min, ${successRate}% sucesso`);
       
       // Enviar notificação visual para o renderer
-      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('automation-leva-completed', {
           totalInvites: automationEngine.totalInvitesSent,
             nicksRemaining: automationEngine.nicksList.length - automationEngine.currentNickIndex,
-            stats: finalStats // ✅ Incluir estatísticas
+            stats: finalStats, // ✅ Incluir estatísticas
+            newLeva: automationEngine ? automationEngine.currentLeva : loadLevaCounter()
         });
         
           // Esconder apenas a barra de progresso (manter estatísticas visíveis)

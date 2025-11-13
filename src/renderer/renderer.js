@@ -3228,6 +3228,14 @@ if (window.electron && window.electron.ipcRenderer) {
       'success',
       30000 // 30 segundos
     );
+    // Garantir que a UI volte ao estado parado (botão Iniciar visível)
+    try {
+      if (startAutomationBtn) startAutomationBtn.style.display = 'inline-block';
+      if (stopAutomationBtn) stopAutomationBtn.style.display = 'none';
+      if (pauseAutomationBtn) pauseAutomationBtn.style.display = 'none';
+    } catch (e) {
+      console.error('Erro ao atualizar botões após leva concluída:', e);
+    }
   });
 
   // ⚠️ Listener para notificação de LEVA INCOMPLETA
@@ -3240,20 +3248,15 @@ if (window.electron && window.electron.ipcRenderer) {
       'warning',
       10000 // 10 segundos
     );
-    
-    // Mostrar ALERT grande e impossível de ignorar
-    setTimeout(() => {
-      alert(
-        `⚠️ LEVA INCOMPLETA - ATENÇÃO! ⚠️\n\n` +
-        `Você processou ${data.processed} de ${data.total} contas.\n` +
-        `Faltam ${data.remaining} contas para completar a Leva ${data.levaNumber}/6.\n\n` +
-        `📌 O QUE FAZER AGORA:\n` +
-        `1. Mude para a PRÓXIMA PÁGINA usando os botões < >\n` +
-        `2. Inicie a automação novamente nas contas restantes\n` +
-        `3. O relatório SÓ será enviado quando TODAS as contas forem processadas\n\n` +
-        `✅ Seu progresso está SALVO! Pode fechar o app e voltar depois.`
-      );
-    }, 500); // Pequeno delay para não conflitar com outras notificações
+
+    // Atualizar UI: voltar para estado parado (mostrar Iniciar)
+    try {
+      if (startAutomationBtn) startAutomationBtn.style.display = 'inline-block';
+      if (stopAutomationBtn) stopAutomationBtn.style.display = 'none';
+      if (pauseAutomationBtn) pauseAutomationBtn.style.display = 'none';
+    } catch (e) {
+      console.error('Erro ao atualizar botões após leva incompleta:', e);
+    }
   });
 
   // Sistema de barra de progresso e estatísticas
@@ -3353,6 +3356,14 @@ if (window.electron && window.electron.ipcRenderer) {
       if (progressBar) {
         progressBar.style.display = 'none';
         document.body.classList.remove('automation-running');
+        // Atualizar botões para estado parado (mostrar Iniciar, ocultar Parar/Pause)
+        try {
+          if (startAutomationBtn) startAutomationBtn.style.display = 'inline-block';
+          if (stopAutomationBtn) stopAutomationBtn.style.display = 'none';
+          if (pauseAutomationBtn) pauseAutomationBtn.style.display = 'none';
+        } catch (e) {
+          console.error('Erro ao atualizar botões no progress-hide:', e);
+        }
       }
     }, 3000);
   });
@@ -3379,6 +3390,16 @@ if (window.electron && window.electron.ipcRenderer) {
       if (statSuccessRate) statSuccessRate.textContent = `${data.stats.successRate}%`;
       if (statSuccessful) statSuccessful.textContent = data.stats.successCount;
       if (statErrors) statErrors.textContent = data.stats.errorCount;
+    }
+    // Atualizar contador de leva exibido (se informado pelo main)
+    try {
+      const progressLeva = document.getElementById('progress-leva');
+      const progressLevaStat = document.getElementById('progress-leva');
+      const newLeva = data && (data.newLeva || data.leva || (data.stats && data.stats.leva));
+      if (newLeva && progressLeva) progressLeva.innerText = newLeva;
+      if (newLeva && progressLevaStat) progressLevaStat.innerText = newLeva;
+    } catch (e) {
+      console.error('Erro ao atualizar contador de leva no renderer:', e);
     }
   });
 
