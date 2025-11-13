@@ -138,6 +138,7 @@ let automationProgress = {
   webhookUrl: null,
   currentCiclo: 0,
   currentAccountIndex: 0,
+  processedAccountIds: [], // IDs das contas já processadas na leva atual
 };
 
 // Carrega progresso e faz merge com defaults para compatibilidade com formatos antigos
@@ -148,6 +149,8 @@ function loadAutomationProgress() {
       const obj = JSON.parse(data);
       if (obj && typeof obj === 'object') {
         automationProgress = Object.assign({}, automationProgress, obj);
+        // Garantir que processedAccountIds seja array
+        if (!Array.isArray(automationProgress.processedAccountIds)) automationProgress.processedAccountIds = [];
         // Garantir que currentNickIndex seja número
         if (typeof automationProgress.currentNickIndex !== 'number') automationProgress.currentNickIndex = 0;
         if (typeof automationProgress.totalInvitesSent !== 'number') automationProgress.totalInvitesSent = 0;
@@ -176,9 +179,14 @@ async function saveProgressAtomic() {
       automationProgress.currentCiclo = typeof automationEngine.currentCiclo === 'number' ? automationEngine.currentCiclo : (automationProgress.currentCiclo || 0);
       automationProgress.currentAccountIndex = typeof automationEngine.currentAccountIndex === 'number' ? automationEngine.currentAccountIndex : (automationProgress.currentAccountIndex || 0);
       automationProgress.webhookUrl = automationEngine.webhookUrl || automationProgress.webhookUrl || null;
-      // Se um reset está em andamento, forçar a leva para 1 (não deixar outro flow sobrescrever)
+      // Sincronizar processedAccountIds se disponível na engine
+      if (Array.isArray(automationEngine.processedAccountIds)) {
+        automationProgress.processedAccountIds = [...new Set(automationEngine.processedAccountIds)];
+      }
+      // Se um reset está em andamento, forçar a leva para 1 e limpar processedAccountIds
       if (resetInProgress) {
         automationProgress.currentLeva = 1;
+        automationProgress.processedAccountIds = [];
       } else {
         automationProgress.currentLeva = typeof automationEngine.currentLeva === 'number' ? automationEngine.currentLeva : (automationProgress.currentLeva || 0);
       }
@@ -187,6 +195,24 @@ async function saveProgressAtomic() {
       logWarn('⚠️ Falha ao sincronizar automationEngine para automationProgress antes de salvar:', e && e.message ? e.message : e);
     }
   }
+
+// Adicionar ID da conta processada ao progresso
+function markAccountProcessed(accountId) {
+  if (!automationProgress.processedAccountIds.includes(accountId)) {
+    automationProgress.processedAccountIds.push(accountId);
+    saveAutomationProgress();
+  }
+}
+function resetAutomationProgress() {
+  automationProgress.currentNickIndex = 0;
+  automationProgress.totalInvitesSent = 0;
+  automationProgress.lastUpdate = null;
+  automationProgress.webhookUrl = null;
+  automationProgress.currentCiclo = 0;
+  automationProgress.currentAccountIndex = 0;
+  automationProgress.processedAccountIds = [];
+  saveAutomationProgress();
+}
 
   // Atualizar timestamp
   automationProgress.lastUpdate = new Date().toISOString();
@@ -3042,6 +3068,11 @@ function clearLevaProgress() {
       log('🗑️ Progresso da leva limpo');
       try { logLevaWrite('delete', levaProgressFilePath, null); } catch (e) { logWarn('⚠️ logLevaWrite(delete) falhou:', e && e.message ? e.message : e); }
     }
+    // Garantir que processedAccountIds também seja limpo no progresso principal
+    if (automationProgress && Array.isArray(automationProgress.processedAccountIds)) {
+      automationProgress.processedAccountIds = [];
+      saveAutomationProgress();
+    }
   } catch (error) {
     logError('❌ Erro ao limpar progresso da leva:', error);
   }
@@ -5474,6 +5505,13 @@ app.whenReady().then(async () => {
         const savedProgress = loadProgress();
         
         // SAVE TO AUTOMATION ENGINE
+        // Update in-memory loadedNicksList (used by get-automation-nicks-count)
+        try {
+          loadedNicksList = Array.isArray(nicks) ? nicks.filter(n => !usedNicksSet.has(n)) : [];
+        } catch (e) {
+          loadedNicksList = Array.isArray(nicks) ? nicks : [];
+        }
+
         if (automationEngine) {
           automationEngine.nicksList = nicks;
           automationEngine.currentNickIndex = savedProgress ? savedProgress.currentNickIndex : automationEngine.currentNickIndex || 0;
@@ -5536,10 +5574,11 @@ app.whenReady().then(async () => {
             );
           }
         }
-        // Notify renderer about new nicks count
+        // Notify renderer about new nicks count (use sanitized in-memory list)
         try {
+          const countToSend = Array.isArray(loadedNicksList) ? loadedNicksList.length : (Array.isArray(nicks) ? nicks.length : 0);
           if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('automation-nicks-status', { count: nicks.length });
+            mainWindow.webContents.send('automation-nicks-status', { count: countToSend });
           }
         } catch (e) {
           // ignore
@@ -5830,6 +5869,7 @@ app.whenReady().then(async () => {
       // ✅ NOVO: Salvar webhook em settings.json (persistência permanente)
       const settingsPath = path.join(userDataPath, 'settings.json');
       let settings = {};
+        let savedWebhook = '';
         try {
           const defaultProgress = {
             totalInvitesSent: 0,

@@ -2589,6 +2589,18 @@ async function loadAndDisplaySavedStats() {
       
       // Atualizar com dados salvos
       if (statNicksLoaded) statNicksLoaded.textContent = savedStats.nicksLoaded || '-';
+      // Atualizar Nicks Restantes consultando o main process (valor atual em loaded-nicks.json)
+      try {
+        const result = await window.electron.invoke('get-automation-nicks-count');
+        const statNicksRemaining = document.getElementById('stat-nicks-remaining');
+        if (result && typeof result.count === 'number') {
+          if (statNicksRemaining) statNicksRemaining.textContent = result.count;
+        }
+        // Garantir validação do botão de iniciar
+        validateAutomationStart();
+      } catch (e) {
+        console.error('Erro ao obter contagem de nicks do main:', e);
+      }
       if (statAccountsVisible) statAccountsVisible.textContent = savedStats.accountsVisible || '-';
       if (statTotalInvites) statTotalInvites.textContent = savedStats.totalInvites || '-';
       if (statRate) statRate.textContent = savedStats.rate ? `${savedStats.rate}/min` : '-';
@@ -3359,6 +3371,7 @@ if (window.electron && window.electron.ipcRenderer) {
       
       if (statNicksLoaded) statNicksLoaded.textContent = data.stats.nicksLoaded || '-';
       if (statNicksRemaining) statNicksRemaining.textContent = data.stats.nicksRemaining || '-';
+      validateAutomationStart();
       if (statAccountsVisible) statAccountsVisible.textContent = data.stats.accountsVisible || '-';
       if (statTotalInvites) statTotalInvites.textContent = data.stats.totalInvites || '-';
       if (statRate) statRate.textContent = `${data.stats.rate}/min`;
@@ -3426,22 +3439,6 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('✅ Elementos carregados - iniciando verificação automática');
     checkForUpdatesAutomatic();
   }, 3000); // 3 segundos de cooldown
-
-  // Restaurar número de nicks restantes ao iniciar a UI
-  (async () => {
-    try {
-      if (window.electron && window.electron.invoke) {
-        const res = await window.electron.invoke('get-automation-nicks-count');
-        if (res && res.success) {
-          const statNicksRemaining = document.getElementById('stat-nicks-remaining');
-          if (statNicksRemaining) statNicksRemaining.textContent = res.count;
-          console.log('📊 Restaurado Nicks Restantes:', res.count);
-        }
-      }
-    } catch (e) {
-      console.error('Erro ao restaurar nicks restantes na inicialização:', e);
-    }
-  })();
 });
 
 // Função para mostrar dialog de remover conta
@@ -3779,6 +3776,44 @@ const loadNicksBtn = document.getElementById('load-nicks-btn');
 const startAutomationBtn = document.getElementById('start-automation-btn');
 const pauseAutomationBtn = document.getElementById('pause-automation-btn');
 const stopAutomationBtn = document.getElementById('stop-automation-btn');
+// Função para validar se há nicks suficientes para iniciar automação
+function validateAutomationStart() {
+  const statNicksLoaded = document.getElementById('stat-nicks-loaded');
+  const statNicksRemaining = document.getElementById('stat-nicks-remaining');
+  const totalAccountsInput = document.getElementById('total-accounts');
+  const nicksCount = parseInt(statNicksLoaded?.textContent || '0');
+  const nicksRemaining = parseInt(statNicksRemaining?.textContent || '0');
+  let dailyAccounts = 0;
+  if (totalAccountsInput && totalAccountsInput.value) {
+    dailyAccounts = parseInt(totalAccountsInput.value.trim()) || 0;
+  }
+  // Se não configurado, usar contas visíveis
+  const visibleAccounts = getVisibleAccountIds().length;
+  const requiredAccounts = dailyAccounts > 0 ? dailyAccounts : visibleAccounts;
+  // Cada conta precisa de 4 nicks por leva (4 ciclos)
+  const requiredNicks = requiredAccounts * 4;
+
+  if (nicksCount === 0 || nicksRemaining < requiredNicks) {
+    if (startAutomationBtn) {
+      startAutomationBtn.disabled = true;
+      startAutomationBtn.style.opacity = '0.6';
+      startAutomationBtn.title = `Nicks insuficientes — é necessário ${requiredNicks} nicks (Contas: ${requiredAccounts} x4).`;
+    }
+
+    // Mostrar notificação amigável no app (não usar alert do Windows)
+    const verb = nicksCount === 0 ? 'Nenhum nick carregado' : `${nicksRemaining} disponível(s) de ${requiredNicks} necessários`;
+    showNotification(`❌ Lista inválida: ${verb}. Carregue mais nicks (precisa de ${requiredNicks}).`, 'error', 8000);
+
+    return false;
+  }
+
+  if (startAutomationBtn) {
+    startAutomationBtn.disabled = false;
+    startAutomationBtn.style.opacity = '';
+    startAutomationBtn.title = '';
+  }
+  return true;
+}
 
 // Botão Carregar Nicks
 if (loadNicksBtn) {
@@ -3800,11 +3835,23 @@ if (loadNicksBtn) {
         if (statNicksLoaded) {
           statNicksLoaded.textContent = nicks.length;
           console.log('📊 Estatísticas atualizadas: Nicks carregados:', nicks.length);
+          // Atualizar nicks restantes consultando o backend
+          try {
+            const res = await window.electron.invoke('get-automation-nicks-count');
+            const statNicksRemaining = document.getElementById('stat-nicks-remaining');
+            if (res && typeof res.count === 'number') {
+              if (statNicksRemaining) statNicksRemaining.textContent = res.count;
+            }
+          } catch (e) {
+            console.error('Erro ao obter contagem de nicks após carregar arquivo:', e);
+          }
+          validateAutomationStart();
         }
         
         if (statAccountsVisible) {
           const visibleAccounts = getVisibleAccountIds();
           statAccountsVisible.textContent = visibleAccounts.length;
+          validateAutomationStart();
           console.log('📊 Estatísticas atualizadas: Contas visíveis:', visibleAccounts.length);
         }
 
@@ -3895,6 +3942,12 @@ if (startAutomationBtn) {
         const visibleAccountIds = getVisibleAccountIds();
         console.log(`👁️ Contas visíveis: ${visibleAccountIds.length}`);
 
+        // Verificar novamente se a lista é suficiente (proteção extra)
+        if (!validateAutomationStart()) {
+          // validateAutomationStart já mostra notificação amigável quando insuficiente
+          return;
+        }
+
         const config = {
           accountIds: visibleAccountIds, // IDs das contas visíveis
         };
@@ -3919,15 +3972,15 @@ if (startAutomationBtn) {
             logContainer.scrollTop = logContainer.scrollHeight;
           }
         } else {
-          alert('Erro ao iniciar automação: ' + result.message);
+          showNotification('❌ Erro ao iniciar automação: ' + (result.message || 'Erro desconhecido'), 'error');
         }
       } else {
         console.error('❌ Método de automação não disponível');
-        alert('Erro: Sistema de automação não disponível');
+        showNotification('Erro: Sistema de automação não disponível', 'error');
       }
     } catch (error) {
       console.error('❌ Erro ao iniciar automação:', error);
-      alert('Erro ao iniciar automação: ' + error.message);
+      showNotification('Erro ao iniciar automação: ' + (error.message || error), 'error');
     }
   });
 } else {
@@ -4216,35 +4269,14 @@ if (window.electron) {
     }
   });
 
-  // Listener para atualização do número de nicks persistidos (nicks restantes em loaded-nicks.json)
-  // Nota: mantemos `stat-nicks-loaded` como o valor inicial quando o usuário faz o "Carregar Nicks".
-  // Aqui o handler atualiza apenas `stat-nicks-remaining` em tempo real.
+  // Listener para atualização do número de nicks persistidos
   window.electron.on('automation-nicks-status', data => {
     try {
       const count = data && typeof data.count === 'number' ? data.count : 0;
       const statNicksRemaining = document.getElementById('stat-nicks-remaining');
       if (statNicksRemaining) statNicksRemaining.textContent = count;
-
-      // Decide whether to disable Start button based on visible accounts
-      const visibleCount = getVisibleAccountIds().length;
-      if (count === 0 || count < visibleCount) {
-        // Grey-out / disable Start button
-        if (startAutomationBtn) {
-          startAutomationBtn.disabled = true;
-          startAutomationBtn.style.opacity = '0.6';
-          startAutomationBtn.title = 'Nicks insuficientes — carregue mais nicks antes de iniciar.';
-        }
-
-        // Show a red toast (hover-to-dismiss supported by showNotification)
-        const verb = count === 0 ? 'Nenhum nick disponível' : `${count} disponível(s) para ${visibleCount} conta(s) visíveis`;
-        showNotification(`❌ Nicks insuficientes: ${verb}. Carregue mais nicks.`, 'error', 8000);
-      } else {
-        if (startAutomationBtn) {
-          startAutomationBtn.disabled = false;
-          startAutomationBtn.style.opacity = '';
-          startAutomationBtn.title = '';
-        }
-      }
+      // Mantém a validação do botão
+      validateAutomationStart();
     } catch (e) {
       console.error('Erro ao processar automation-nicks-status:', e);
     }
