@@ -3426,6 +3426,22 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('✅ Elementos carregados - iniciando verificação automática');
     checkForUpdatesAutomatic();
   }, 3000); // 3 segundos de cooldown
+
+  // Restaurar número de nicks restantes ao iniciar a UI
+  (async () => {
+    try {
+      if (window.electron && window.electron.invoke) {
+        const res = await window.electron.invoke('get-automation-nicks-count');
+        if (res && res.success) {
+          const statNicksRemaining = document.getElementById('stat-nicks-remaining');
+          if (statNicksRemaining) statNicksRemaining.textContent = res.count;
+          console.log('📊 Restaurado Nicks Restantes:', res.count);
+        }
+      }
+    } catch (e) {
+      console.error('Erro ao restaurar nicks restantes na inicialização:', e);
+    }
+  })();
 });
 
 // Função para mostrar dialog de remover conta
@@ -4200,12 +4216,14 @@ if (window.electron) {
     }
   });
 
-  // Listener para atualização do número de nicks persistidos
+  // Listener para atualização do número de nicks persistidos (nicks restantes em loaded-nicks.json)
+  // Nota: mantemos `stat-nicks-loaded` como o valor inicial quando o usuário faz o "Carregar Nicks".
+  // Aqui o handler atualiza apenas `stat-nicks-remaining` em tempo real.
   window.electron.on('automation-nicks-status', data => {
     try {
       const count = data && typeof data.count === 'number' ? data.count : 0;
-      const statNicksLoaded = document.getElementById('stat-nicks-loaded');
-      if (statNicksLoaded) statNicksLoaded.textContent = count;
+      const statNicksRemaining = document.getElementById('stat-nicks-remaining');
+      if (statNicksRemaining) statNicksRemaining.textContent = count;
 
       // Decide whether to disable Start button based on visible accounts
       const visibleCount = getVisibleAccountIds().length;
