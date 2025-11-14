@@ -5551,7 +5551,20 @@ app.whenReady().then(async () => {
 
         if (automationEngine) {
           automationEngine.nicksList = nicks;
-          automationEngine.currentNickIndex = savedProgress ? savedProgress.currentNickIndex : automationEngine.currentNickIndex || 0;
+          automationEngine.currentNickIndex = savedProgress ? savedProgress.currentNickIndex : (automationEngine.currentNickIndex || 0);
+          // Ensure the restored index does not exceed the newly loaded nicks list.
+          try {
+            if (typeof automationEngine.currentNickIndex === 'number') {
+              if (automationEngine.currentNickIndex >= automationEngine.nicksList.length) {
+                logWarn('🔧 Índice de progresso excede o tamanho da nova lista de nicks — ajustando para 0 automaticamente');
+                automationEngine.currentNickIndex = 0;
+                // Persist adjusted progress so next start uses the corrected index
+                try { saveProgress(); } catch (e) { logWarn('Falha ao salvar progresso ajustado:', e && e.message ? e.message : e); }
+              }
+            }
+          } catch (e) {
+            logWarn('Erro ao validar currentNickIndex vs nicksList:', e && e.message ? e.message : e);
+          }
           automationEngine.totalInvitesSent = savedProgress ? savedProgress.totalInvitesSent : 0;
           // ✅ Prioridade MÁXIMA: webhook salvo em settings.json
           automationEngine.webhookUrl = savedWebhook;
@@ -5599,10 +5612,21 @@ app.whenReady().then(async () => {
             currentAccountIndex: savedProgress ? savedProgress.currentAccountIndex : 0,
             totalInvitesSent: savedProgress ? savedProgress.totalInvitesSent : 0,
             nicksList: nicks,
-            currentNickIndex: savedProgress ? savedProgress.currentNickIndex : 0,
+            currentNickIndex: (savedProgress && typeof savedProgress.currentNickIndex === 'number') ? savedProgress.currentNickIndex : 0,
             // ✅ Usar webhook de settings.json (persistência permanente)
             webhookUrl: savedWebhook,
           };
+          // Validate currentNickIndex against list length
+          try {
+            if (automationEngine.currentNickIndex >= automationEngine.nicksList.length) {
+              logWarn('🔧 Índice de progresso excede o tamanho da lista de nicks ao criar engine — ajustando para 0 automaticamente');
+              automationEngine.currentNickIndex = 0;
+              try { saveProgress(); } catch (e) { logWarn('Falha ao salvar progresso ajustado (engine creation):', e && e.message ? e.message : e); }
+            }
+          } catch (e) {
+            logWarn('Erro ao validar currentNickIndex durante criação da engine:', e && e.message ? e.message : e);
+          }
+
           log(`✅ automationEngine criado e nicks salvos: ${nicks.length}`);
           log(`📊 Leva atual: ${currentLeva}/6`);
           if (savedProgress) {
