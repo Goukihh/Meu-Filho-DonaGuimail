@@ -703,14 +703,18 @@ function beginTemporaryPause(reason, timeoutMs = DEFAULT_PAUSE_TIMEOUT_MS) {
 
     // Stop automation while UI action runs
     if (automationEngine) {
-      // Limpar marcação temporária de contas puladas nesta leva
+      // PRESERVE: Do NOT clear `accountsSkippedThisLeva` here.
+      // Clearing it caused a bug where accounts detected as "limited access"
+      // would lose their skipped state when a temporary pause occurred
+      // (e.g. context menu, rename, add-account). That led the automation
+      // to attempt sending friend requests again on accounts that should
+      // remain skipped for the current leva. Keep the set intact so a
+      // previously-detected limited account remains skipped until the
+      // leva completes or is explicitly reset elsewhere.
       try {
-        if (accountsSkippedThisLeva && typeof accountsSkippedThisLeva.clear === 'function') {
-          accountsSkippedThisLeva.clear();
-          automationLog('🧾 accountsSkippedThisLeva limpo para próxima leva');
-        }
+        // intentionally no-op to preserve skipped accounts
       } catch (e) {
-        logWarn('Falha ao limpar accountsSkippedThisLeva:', e && e.message ? e.message : e);
+        logWarn('Falha silenciosa no preservador de accountsSkippedThisLeva:', e && e.message ? e.message : e);
       }
 
       automationEngine.isRunning = false;
@@ -6606,6 +6610,12 @@ app.whenReady().then(async () => {
 
   // Arquivo para salvar estatísticas incrementais (recuperação em caso de queda)
   const incrementalStatsPath = path.join(userDataPath, 'incremental-stats.json');
+  // Pasta para salvar estatísticas detalhadas por leva
+  const levaStatsDir = path.join(userDataPath, 'leva-stats');
+  const allLevaIndexPath = path.join(levaStatsDir, 'all-leva-stats.json');
+  if (!fs.existsSync(levaStatsDir)) {
+    try { fs.mkdirSync(levaStatsDir, { recursive: true }); } catch (e) { logWarn('⚠️ Falha ao criar leva-stats dir:', e && e.message ? e.message : e); }
+  }
   
   // Salvar estatísticas incrementais (a cada convite)
   function saveIncrementalStats() {
@@ -6649,6 +6659,203 @@ app.whenReady().then(async () => {
       }
     } catch (error) {
       log('⚠️ Erro ao limpar estatísticas incrementais:', error.message);
+    }
+  }
+
+  // Salvar estatísticas detalhadas da leva (para gerar relatório consolidado posteriormente)
+  function saveLevaDetailedStats(levaNumber, payload) {
+    try {
+      const filePath = path.join(levaStatsDir, `leva_${levaNumber}.json`);
+      fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+      // Atualizar índice simples
+      let index = [];
+      try {
+        if (fs.existsSync(allLevaIndexPath)) {
+          index = JSON.parse(fs.readFileSync(allLevaIndexPath, 'utf8')) || [];
+        }
+      } catch (e) { index = []; }
+      // Replace or push
+      const existing = index.find(i => i.levaNumber === levaNumber);
+      const summary = { levaNumber, totalInvites: payload.finalStats ? payload.finalStats.totalInvites : (payload.successCount || 0) + (payload.errorCount || 0), timestamp: new Date().toISOString() };
+      if (existing) {
+        existing.summary = summary;
+      } else {
+        index.push({ levaNumber, summary });
+      }
+      fs.writeFileSync(allLevaIndexPath, JSON.stringify(index, null, 2), 'utf8');
+      log(`💾 Estatísticas detalhadas salvas para a Leva ${levaNumber}`);
+      return true;
+    } catch (e) {
+      logWarn('⚠️ Falha ao salvar estatísticas detalhadas da leva:', e && e.message ? e.message : e);
+      return false;
+    }
+  }
+
+  // Carregar todas as estatísticas detalhadas de todas as levas disponíveis
+  function loadAllLevaDetailedStats() {
+    try {
+      if (!fs.existsSync(levaStatsDir)) return [];
+      const files = fs.readdirSync(levaStatsDir).filter(f => f.startsWith('leva_') && f.endsWith('.json'));
+      const arr = [];
+      for (const f of files) {
+        try {
+          const data = fs.readFileSync(path.join(levaStatsDir, f), 'utf8');
+          const parsed = JSON.parse(data);
+          arr.push(parsed);
+        } catch (e) {
+          logWarn('⚠️ Falha ao ler uma leva file durante loadAllLevaDetailedStats:', e && e.message ? e.message : e);
+        }
+      }
+      // Sort by levaNumber if present
+      arr.sort((a, b) => (a.levaNumber || 0) - (b.levaNumber || 0));
+      return arr;
+    } catch (e) {
+      logWarn('⚠️ Erro ao carregar estatísticas detalhadas das levas:', e && e.message ? e.message : e);
+      return [];
+    }
+  }
+
+  // Gerar relatório consolidado a partir das estatísticas detalhadas das levas
+  async function generateConsolidatedLevaReport(levaStatsArray) {
+    try {
+      if (!Array.isArray(levaStatsArray) || levaStatsArray.length === 0) return { success: false, error: 'No leva stats available' };
+
+      // Agregar totais
+      let totalInvites = 0;
+      let totalSuccess = 0;
+      let totalErrors = 0;
+      let totalNicksLoaded = 0;
+      let totalNicksUsed = 0;
+      const combinedAccountsPerformance = {};
+      const combinedErrorScreenshots = [];
+
+      for (const s of levaStatsArray) {
+        const fsStat = s.finalStats || {};
+        totalInvites += Number(fsStat.totalInvites || 0);
+        totalSuccess += Number(fsStat.successCount || 0);
+        totalErrors += Number(fsStat.errorCount || 0);
+        totalNicksLoaded += Number(fsStat.nicksLoaded || 0);
+        totalNicksUsed += Number(fsStat.nicksUsed || 0);
+
+        // Merge accountsPerformance if present
+        if (s.accountsPerformance && typeof s.accountsPerformance === 'object') {
+          for (const [accName, perf] of Object.entries(s.accountsPerformance)) {
+            if (!combinedAccountsPerformance[accName]) combinedAccountsPerformance[accName] = { sent: 0, success: 0, errors: 0, errorDetails: [] };
+            combinedAccountsPerformance[accName].sent += perf.sent || 0;
+            combinedAccountsPerformance[accName].success += perf.success || 0;
+            combinedAccountsPerformance[accName].errors += perf.errors || 0;
+            if (Array.isArray(perf.errorDetails)) combinedAccountsPerformance[accName].errorDetails.push(...perf.errorDetails.map(d => ({ ...d, levaNumber: s.levaNumber })));
+          }
+        }
+
+        if (Array.isArray(s.errorScreenshots)) {
+          combinedErrorScreenshots.push(...s.errorScreenshots.map(ss => ({ ...ss, levaNumber: s.levaNumber })));
+        }
+      }
+
+      const consolidated = {
+        totalLevas: levaStatsArray.length,
+        totalInvites,
+        totalSuccess,
+        totalErrors,
+        totalNicksLoaded,
+        totalNicksUsed,
+        accountsPerformance: combinedAccountsPerformance,
+        errorScreenshots: combinedErrorScreenshots,
+        generatedAt: new Date().toISOString()
+      };
+
+      // Gerar PDF simples consolidado (reusar lógica semelhante ao generateRealLevaReport)
+      const pdfPath = path.join(userDataPath, `relatorio_consolidado_${Date.now()}.pdf`);
+      const doc = new PDFDocument({ size: 'A4', margin: 50 });
+      const stream = fs.createWriteStream(pdfPath);
+      doc.pipe(stream);
+
+      doc.fontSize(22).font('Helvetica-Bold').text('RELATÓRIO CONSOLIDADO - Todas as Levas', { align: 'center' });
+      doc.moveDown();
+      doc.fontSize(12).text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, { align: 'center' });
+      doc.moveDown(2);
+
+      doc.fontSize(14).font('Helvetica-Bold').text('RESUMO GERAL', { underline: true });
+      doc.moveDown();
+      doc.fontSize(12).font('Helvetica');
+      doc.text(`Levas Consolidadas: ${consolidated.totalLevas}`);
+      doc.text(`Total de Convites: ${consolidated.totalInvites}`);
+      doc.text(`Sucessos: ${consolidated.totalSuccess}`);
+      doc.text(`Erros: ${consolidated.totalErrors}`);
+      const successRate = consolidated.totalInvites > 0 ? Math.round((consolidated.totalSuccess / consolidated.totalInvites) * 100) : 0;
+      doc.text(`Taxa de Sucesso: ${successRate}%`);
+      doc.moveDown();
+
+      // Desempenho por conta (compacto)
+      doc.fontSize(14).font('Helvetica-Bold').text('DESEMPENHO POR CONTA (AGREGADO)', { underline: true });
+      doc.moveDown();
+      doc.fontSize(10).font('Helvetica');
+      const startX = 50;
+      const colWidths = { conta: 160, enviados: 70, sucesso: 70, erros: 70 };
+      doc.text('Conta', startX, doc.y);
+      doc.text('Enviados', startX + colWidths.conta, doc.y);
+      doc.text('Sucesso', startX + colWidths.conta + colWidths.enviados, doc.y);
+      doc.text('Erros', startX + colWidths.conta + colWidths.enviados + colWidths.sucesso, doc.y);
+      doc.moveDown();
+
+      for (const [accountName, perf] of Object.entries(consolidated.accountsPerformance)) {
+        const y = doc.y;
+        doc.text(accountName, startX, y);
+        doc.text(String(perf.sent || 0), startX + colWidths.conta, y);
+        doc.text(String(perf.success || 0), startX + colWidths.conta + colWidths.enviados, y);
+        doc.text(String(perf.errors || 0), startX + colWidths.conta + colWidths.enviados + colWidths.sucesso, y);
+        doc.moveDown();
+        if (doc.y > 700) { doc.addPage(); }
+      }
+
+      // Screenshots (listar apenas nomes)
+      if (consolidated.errorScreenshots.length > 0) {
+        doc.addPage();
+        doc.fontSize(14).font('Helvetica-Bold').text('SCREENSHOTS DE ERROS (CONSOLIDADOS)', { underline: true });
+        doc.moveDown();
+        doc.fontSize(10).font('Helvetica');
+        for (const s of consolidated.errorScreenshots) {
+          doc.text(`${s.levaNumber || '?'} - ${s.accountName || ''} - ${s.targetNick || ''} - ${s.errorType || ''}`);
+          doc.moveDown(0.2);
+          if (doc.y > 700) doc.addPage();
+        }
+      }
+
+      doc.end();
+      await new Promise((resolve, reject) => { stream.on('finish', resolve); stream.on('error', reject); });
+
+      // Enviar para webhook (reusar webhookManager)
+      const settingsPath = path.join(userDataPath, 'settings.json');
+      let webhookUrl = null;
+      try { if (fs.existsSync(settingsPath)) { const s = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); webhookUrl = s.webhookUrl || null; } } catch (e) { webhookUrl = null; }
+      if (!webhookUrl) {
+        logWarn('⚠️ Webhook não configurado - relatório consolidado gerado localmente:', pdfPath);
+        return { success: true, path: pdfPath, note: 'Webhook not configured' };
+      }
+
+      const form = new FormData();
+      const embedData = {
+        content: `📊 **Relatório Consolidado - ${consolidated.totalLevas} Levas Completas**`,
+        embeds: [{ title: `📑 Relatório Consolidado`, color: 3447003, fields: [ { name: 'Convites', value: String(consolidated.totalInvites), inline: true }, { name: 'Sucessos', value: String(consolidated.totalSuccess), inline: true }, { name: 'Erros', value: String(consolidated.totalErrors), inline: true }, { name: 'Taxa Sucesso', value: `${successRate}%`, inline: true } ], timestamp: new Date().toISOString() }]
+      };
+      form.append('payload_json', JSON.stringify(embedData));
+      form.append('file', fs.createReadStream(pdfPath), { filename: `relatorio_consolidado_leva_${Date.now()}.pdf` });
+
+      const webhookResult = await webhookManager.sendToWebhook(webhookUrl, form, { maxRetries: 3, initialDelay: 1000, timeout: 30000 });
+      if (!webhookResult.success) {
+        logWarn('⚠️ Falha ao enviar relatorio consolidado ao webhook:', webhookResult.error);
+        return { success: false, error: webhookResult.error };
+      }
+
+      // Deletar PDF temporário
+      try { fs.unlinkSync(pdfPath); } catch (e) { /* ignore */ }
+
+      log('✅ Relatório consolidado enviado ao webhook com sucesso');
+      return { success: true };
+    } catch (e) {
+      logWarn('⚠️ Erro ao gerar relatório consolidado:', e && e.message ? e.message : e);
+      return { success: false, error: e && e.message ? e.message : String(e) };
     }
   }
 
@@ -6914,15 +7121,20 @@ app.whenReady().then(async () => {
             break;
           }
           const account = (typeof accountsToProcess !== 'undefined') ? accountsToProcess[accountIndex] : groupAccounts[accountIndex];
-          // Quick check: if this account's BrowserView already shows 'limited access', skip immediately.
+          // Always switch to the account and wait for Discord to load before checking for limitation popups.
+          automationLog(`🔄 Trocando para conta ${account.name}...`);
+          await switchToAccount(account.id);
+          automationLog(`⏳ Aguardando Discord carregar...`);
+          await sleep(250 + Math.random() * 200); // 0.25-0.45s (SUPER RÁPIDO!)
+          await waitWhilePaused();
+          // Now check for limitation popups (rate limit or account limited)
           try {
-            const preView = browserViews.get(account.id);
-            if (preView && preView.webContents) {
-              const preLimited = await detectLimitedAccessInstant(preView);
-              if (preLimited) {
-                automationLog(`🚫 Conta detectada como limitada antes de processar: ${account.name}`);
-                try { accountsSkippedThisLeva.add(account.id); } catch (e) { logWarn('Falha ao marcar account skipped (pre):', e && e.message ? e.message : e); }
-                recordAccountPerformance(account.name, false, 'limitedAccess', 'Skipped due to persistent limited access (pre-check)');
+            const currentView = browserViews.get(account.id);
+            if (currentView && currentView.webContents) {
+              const limited = await detectLimitedAccessInstant(currentView);
+              if (limited) {
+                automationLog(`🚫 Conta detectada como limitada: ${account.name}`);
+                recordAccountPerformance(account.name, false, 'limitedAccess', 'Skipped due to limitation popup (live check)');
                 try { errorsByType.other++; } catch (e) { /* ignore */ }
                 automationErrorCount++;
                 saveIncrementalStats();
@@ -6934,23 +7146,11 @@ app.whenReady().then(async () => {
               }
             }
           } catch (e) {
-            logWarn('Pre-check detectLimitedAccessPolling erro:', e && e.message ? e.message : e);
+            logWarn('Live limitation check erro:', e && e.message ? e.message : e);
           }
           // Se esta conta foi marcada como limitada durante a leva atual, pular sem consumir nick
-          if (accountsSkippedThisLeva && accountsSkippedThisLeva.has && accountsSkippedThisLeva.has(account.id)) {
-            automationLog(`⏭️ Pulando conta (marcada como limitada nesta leva): ${account.name}`);
-            // Registrar desempenho como 'limitedAccess' para aparecer como 'Outro' no PDF
-            recordAccountPerformance(account.name, false, 'limitedAccess', 'Skipped due to limited access during this leva');
-            // Incrementar contadores de erro
-            try { errorsByType.other++; } catch (e) { /* ignore */ }
-            automationErrorCount++;
-            saveIncrementalStats();
-            sendProgressUpdate(ciclo, accountIndex, totalAccounts);
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('stats-update', { success: false, error: true, totalAccounts, maxInvites: totalAccounts * 4 });
-            }
-            continue;
-          }
+          // Dynamic skipping: do not rely on accountsSkippedThisLeva persistence.
+          // Skipping decisions are made via live checks (detectLimitedAccessInstant).
 
           // FIFO: pega e remove o próximo nick
           const currentNick = await claimNextNick();
@@ -7065,8 +7265,7 @@ app.whenReady().then(async () => {
 
                 // Special case: limited access -> skip this account for the remainder of the current leva
                 if (String(immediate.error || '').toLowerCase().indexOf('limitedaccess') >= 0 || String(immediate.error || '').toLowerCase().indexOf('limited access') >= 0) {
-                  automationLog(`🚫 Conta marcada como limitada durante esta leva: ${account.name}`);
-                  try { accountsSkippedThisLeva.add(account.id); } catch(e) { logWarn('Falha ao marcar account skipped:', e && e.message ? e.message : e); }
+                  automationLog(`🚫 Conta detectada como limitada após clique: ${account.name}`);
 
                   automationEngine.currentNickIndex++;
                   automationEngine.totalInvitesSent++;
@@ -7080,6 +7279,7 @@ app.whenReady().then(async () => {
                   if (mainWindow && !mainWindow.isDestroyed()) {
                     mainWindow.webContents.send('stats-update', { success: false, error: true, totalAccounts, maxInvites: totalAccounts * 4 });
                   }
+                  // Do NOT persist skip; next time we will re-evaluate live
                   continue;
                 }
 
@@ -7108,8 +7308,7 @@ app.whenReady().then(async () => {
               if (currentView && currentView.webContents) {
                 const lateLimited = await detectLimitedAccessInstant(currentView);
                 if (lateLimited) {
-                  automationLog(`🚫 Conta marcada como limitada (detecção tardia): ${account.name}`);
-                  try { accountsSkippedThisLeva.add(account.id); } catch(e) { logWarn('Falha ao marcar account skipped:', e && e.message ? e.message : e); }
+                  automationLog(`🚫 Conta detectada como limitada (detecção tardia): ${account.name}`);
 
                   automationEngine.currentNickIndex++;
                   automationEngine.totalInvitesSent++;
@@ -7122,6 +7321,7 @@ app.whenReady().then(async () => {
                   if (mainWindow && !mainWindow.isDestroyed()) {
                     mainWindow.webContents.send('stats-update', { success: false, error: true, totalAccounts, maxInvites: totalAccounts * 4 });
                   }
+                  // Do NOT persist skip; next time we'll check live again
                   continue;
                 }
               }
@@ -8441,17 +8641,37 @@ app.whenReady().then(async () => {
     async function detectLimitedAccessInstant(view) {
       try {
         if (!view || !view.webContents) return false;
+        // Read body text once (fast) and search for known phrases for both
+        // 'limited access' and 'rate limit' (Way Too Spicy) popups.
         const simpleText = await safeExecuteJS(view, `(function(){ try { return document.body ? (document.body.innerText || document.body.textContent) : ''; } catch(e){ return ''; } })();`);
         if (simpleText && typeof simpleText === 'string') {
           const lower = simpleText.toLowerCase();
+          // Account-limited phrases
           if (lower.indexOf('your account has limited access') >= 0 || lower.indexOf('limited access') >= 0 || lower.indexOf('has limited your access') >= 0) {
             return true;
           }
+          // Rate-limit / 'Way Too Spicy' phrases
+          if (lower.indexOf('way too spicy') >= 0 || lower.indexOf('you\'re sending friend requests too quickly') >= 0 || lower.indexOf('sending friend requests too quickly') >= 0 || lower.indexOf('too quickly') >= 0 || lower.indexOf('sending friend requests too fast') >= 0) {
+            return true;
+          }
         }
-        const modalText = await safeExecuteJS(view, `(function(){ try { var m=document.querySelector('div[role="dialog"][aria-modal="true"]'); return m?m.textContent:''; } catch(e){ return ''; } })();`);
-        if (modalText && typeof modalText === 'string' && modalText.toLowerCase().indexOf('limited access') >= 0) return true;
-        const alertText = await safeExecuteJS(view, `(function(){ try { var a=document.querySelector('div[role="alert"]'); return a?a.textContent:''; } catch(e){ return ''; } })();`);
-        if (alertText && typeof alertText === 'string' && alertText.toLowerCase().indexOf('limited access') >= 0) return true;
+
+        // Check modal/dialog specifically (role=dialog) for heading/text
+        const modalText = await safeExecuteJS(view, `(function(){ try { var m=document.querySelector('div[role="dialog"]') || document.querySelector('div[role="dialog"][aria-modal="true"]'); return m?m.textContent:''; } catch(e){ return ''; } })();`);
+        if (modalText && typeof modalText === 'string') {
+          const mLower = modalText.toLowerCase();
+          if (mLower.indexOf('limited access') >= 0) return true;
+          if (mLower.indexOf('way too spicy') >= 0 || mLower.indexOf('sending friend requests too quickly') >= 0 || mLower.indexOf('enter the chill zone') >= 0) return true;
+        }
+
+        // Check alert role elements (inline alerts)
+        const alertText = await safeExecuteJS(view, `(function(){ try { var a=document.querySelector('div[role="alert"]'); if(!a) return ''; return a.textContent || a.innerText || ''; } catch(e){ return ''; } })();`);
+        if (alertText && typeof alertText === 'string') {
+          const aLower = alertText.toLowerCase();
+          if (aLower.indexOf('limited access') >= 0) return true;
+          if (aLower.indexOf('too fast') >= 0 || aLower.indexOf('too quickly') >= 0 || aLower.indexOf('way too spicy') >= 0) return true;
+        }
+
         return false;
       } catch (e) {
         logWarn('detectLimitedAccessInstant erro:', e && e.message ? e.message : e);
