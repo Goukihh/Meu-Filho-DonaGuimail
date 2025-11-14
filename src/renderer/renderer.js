@@ -9,7 +9,10 @@ let editingAccountId = null;
 
 // Paginação
 let currentPage = 0;
-let ACCOUNTS_PER_PAGE = 20;
+// =============================
+// Modo dinâmico restaurado: ACCOUNTS_PER_PAGE será calculado automaticamente
+let ACCOUNTS_PER_PAGE = 10; // Valor inicial, será recalculado
+// =============================
 
 // Cache
 const avatarCache = new Map();
@@ -137,6 +140,11 @@ function initTitleBar() {
 
 // Calcular contas por página baseado na resolução
 function calculateAccountsPerPage() {
+  // Bloquear recalculo automático se modo de teste estiver ativo
+  if (window.__teste_mode) {
+    log('🔬 [TESTE] Modo de teste ativo - ACCOUNTS_PER_PAGE fixo:', ACCOUNTS_PER_PAGE);
+    return;
+  }
   const screenWidth = window.innerWidth;
 
   // 1920x1080+: 20 contas por página
@@ -572,7 +580,8 @@ function renderAccounts() {
     }
 
     // Verificar se precisamos recalcular o número de contas por página
-    if (accounts.length > ACCOUNTS_PER_PAGE * 2) {
+    // Quando o modo de teste está ativo (override), não recalcular automaticamente
+    if (!window.__teste_mode && accounts.length > ACCOUNTS_PER_PAGE * 2) {
       console.log('🔄 Muitas contas detectadas - recalculando layout');
       calculateAccountsPerPage();
     }
@@ -3235,6 +3244,120 @@ if (window.electron && window.electron.ipcRenderer) {
       if (pauseAutomationBtn) pauseAutomationBtn.style.display = 'none';
     } catch (e) {
       console.error('Erro ao atualizar botões após leva concluída:', e);
+    }
+  });
+
+  // -----------------------------
+  // TESTE: listener para exibir grupo de contas (paginação de teste)
+  // Recebe: { grupo: [accounts], paginaAtual: 0, paginasTotais: N }
+  window.electron.ipcRenderer.on('teste-display-accounts', (event, data) => {
+    try {
+      console.log('🔬 [TESTE] teste-display-accounts recebido:', data);
+      // Criar UI de teste se não existir
+      let testOverlay = document.getElementById('teste-pagination-overlay');
+      if (!testOverlay) {
+        testOverlay = document.createElement('div');
+        testOverlay.id = 'teste-pagination-overlay';
+        testOverlay.style.position = 'fixed';
+        testOverlay.style.right = '16px';
+        testOverlay.style.top = '56px';
+        testOverlay.style.zIndex = '99999';
+        testOverlay.style.background = 'rgba(0,0,0,0.6)';
+        testOverlay.style.color = '#fff';
+        testOverlay.style.padding = '8px';
+        testOverlay.style.borderRadius = '6px';
+        testOverlay.style.fontSize = '12px';
+        testOverlay.style.display = 'flex';
+        testOverlay.style.alignItems = 'center';
+        testOverlay.style.gap = '8px';
+        document.body.appendChild(testOverlay);
+      }
+
+      // Limpar conteúdo
+      testOverlay.innerHTML = '';
+
+      const prevBtn = document.createElement('button');
+      prevBtn.textContent = '<';
+      prevBtn.style.padding = '6px 8px';
+      prevBtn.onclick = () => {
+        const cur = window.__teste_pagina_atual || 0;
+        const next = Math.max(0, cur - 1);
+        window.__teste_pagina_atual = next;
+        window.electron.ipcRenderer.invoke('teste-request-page', { pageIndex: next });
+      };
+
+      const nextBtn = document.createElement('button');
+      nextBtn.textContent = '>';
+      nextBtn.style.padding = '6px 8px';
+      nextBtn.onclick = () => {
+        const cur = window.__teste_pagina_atual || 0;
+        const next = Math.min((data.paginasTotais || 1) - 1, cur + 1);
+        window.__teste_pagina_atual = next;
+        window.electron.ipcRenderer.invoke('teste-request-page', { pageIndex: next });
+      };
+
+      const info = document.createElement('div');
+      info.style.minWidth = '160px';
+      info.innerHTML = `<strong>Teste Paginação</strong><br> Página: ${data.paginaAtual + 1}/${data.paginasTotais}`;
+
+      const list = document.createElement('div');
+      list.style.display = 'flex';
+      list.style.gap = '6px';
+
+      if (Array.isArray(data.grupo)) {
+        data.grupo.forEach(acc => {
+          const item = document.createElement('div');
+          item.style.textAlign = 'center';
+          item.style.width = '48px';
+          item.style.fontSize = '11px';
+
+          const img = document.createElement('img');
+          img.src = acc.avatar || '';
+          img.alt = acc.name || '';
+          img.style.width = '40px';
+          img.style.height = '40px';
+          img.style.borderRadius = '50%';
+          img.style.display = 'block';
+          img.style.objectFit = 'cover';
+
+          const name = document.createElement('div');
+          name.textContent = acc.name || acc.id || '-';
+          name.style.whiteSpace = 'nowrap';
+          name.style.overflow = 'hidden';
+          name.style.textOverflow = 'ellipsis';
+
+          item.appendChild(img);
+          item.appendChild(name);
+          list.appendChild(item);
+        });
+      }
+
+      testOverlay.appendChild(prevBtn);
+      testOverlay.appendChild(info);
+      testOverlay.appendChild(list);
+      testOverlay.appendChild(nextBtn);
+
+      // set global page for buttons
+      window.__teste_pagina_atual = data.paginaAtual || 0;
+    } catch (e) {
+      console.error('Erro ao processar teste-display-accounts:', e);
+    }
+  });
+
+  // TESTE: Listener para ativar modo de paginação de teste (override de ACCOUNTS_PER_PAGE)
+  window.electron.ipcRenderer.on('teste-mode-enabled', (event, data) => {
+    try {
+      console.log('🔬 [TESTE] teste-mode-enabled recebido:', data);
+      if (data && typeof data.contasPorAba === 'number' && data.contasPorAba > 0) {
+        // Marcar modo de teste para evitar recalcs automáticos
+        window.__teste_mode = true;
+        ACCOUNTS_PER_PAGE = data.contasPorAba;
+        currentPage = 0;
+        // Re-renderizar com novo valor
+        if (typeof renderAccounts === 'function') renderAccounts();
+      }
+    } catch (e) {
+      console.error('Erro ao processar teste-mode-enabled:', e);
     }
   });
 

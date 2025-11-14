@@ -1,4 +1,7 @@
 const { app, BrowserWindow, BrowserView, ipcMain, session, dialog } = require('electron');
+// =============================
+// =============================
+// Modo dinâmico restaurado: contas por aba será calculado conforme resolução
 const path = require('path');
 const fs = require('fs');
 const archiver = require('archiver');
@@ -138,7 +141,7 @@ let automationProgress = {
   webhookUrl: null,
   currentCiclo: 0,
   currentAccountIndex: 0,
-  processedAccountIds: [], // IDs das contas já processadas na leva atual
+  processedCount: [], // IDs das contas já processadas na leva atual
 };
 
 // Carrega progresso e faz merge com defaults para compatibilidade com formatos antigos
@@ -149,8 +152,8 @@ function loadAutomationProgress() {
       const obj = JSON.parse(data);
       if (obj && typeof obj === 'object') {
         automationProgress = Object.assign({}, automationProgress, obj);
-        // Garantir que processedAccountIds seja array
-        if (!Array.isArray(automationProgress.processedAccountIds)) automationProgress.processedAccountIds = [];
+        // Garantir que processedCount seja array
+        if (!Array.isArray(automationProgress.processedCount)) automationProgress.processedCount = [];
         // Garantir que currentNickIndex seja número
         if (typeof automationProgress.currentNickIndex !== 'number') automationProgress.currentNickIndex = 0;
         if (typeof automationProgress.totalInvitesSent !== 'number') automationProgress.totalInvitesSent = 0;
@@ -179,14 +182,14 @@ async function saveProgressAtomic() {
       automationProgress.currentCiclo = typeof automationEngine.currentCiclo === 'number' ? automationEngine.currentCiclo : (automationProgress.currentCiclo || 0);
       automationProgress.currentAccountIndex = typeof automationEngine.currentAccountIndex === 'number' ? automationEngine.currentAccountIndex : (automationProgress.currentAccountIndex || 0);
       automationProgress.webhookUrl = automationEngine.webhookUrl || automationProgress.webhookUrl || null;
-      // Sincronizar processedAccountIds se disponível na engine
-      if (Array.isArray(automationEngine.processedAccountIds)) {
-        automationProgress.processedAccountIds = [...new Set(automationEngine.processedAccountIds)];
+      // Sincronizar processedCount se disponível na engine
+      if (Array.isArray(automationEngine.processedCount)) {
+        automationProgress.processedCount = [...new Set(automationEngine.processedCount)];
       }
-      // Se um reset está em andamento, forçar a leva para 1 e limpar processedAccountIds
+      // Se um reset está em andamento, forçar a leva para 1 e limpar processedCount
       if (resetInProgress) {
         automationProgress.currentLeva = 1;
-        automationProgress.processedAccountIds = [];
+        automationProgress.processedCount = [];
       } else {
         automationProgress.currentLeva = typeof automationEngine.currentLeva === 'number' ? automationEngine.currentLeva : (automationProgress.currentLeva || 0);
       }
@@ -198,8 +201,8 @@ async function saveProgressAtomic() {
 
 // Adicionar ID da conta processada ao progresso
 function markAccountProcessed(accountId) {
-  if (!automationProgress.processedAccountIds.includes(accountId)) {
-    automationProgress.processedAccountIds.push(accountId);
+  if (!automationProgress.processedCount.includes(accountId)) {
+    automationProgress.processedCount.push(accountId);
     saveAutomationProgress();
   }
 }
@@ -210,7 +213,7 @@ function resetAutomationProgress() {
   automationProgress.webhookUrl = null;
   automationProgress.currentCiclo = 0;
   automationProgress.currentAccountIndex = 0;
-  automationProgress.processedAccountIds = [];
+  automationProgress.processedCount = [];
   saveAutomationProgress();
 }
 
@@ -700,6 +703,16 @@ function beginTemporaryPause(reason, timeoutMs = DEFAULT_PAUSE_TIMEOUT_MS) {
 
     // Stop automation while UI action runs
     if (automationEngine) {
+      // Limpar marcação temporária de contas puladas nesta leva
+      try {
+        if (accountsSkippedThisLeva && typeof accountsSkippedThisLeva.clear === 'function') {
+          accountsSkippedThisLeva.clear();
+          automationLog('🧾 accountsSkippedThisLeva limpo para próxima leva');
+        }
+      } catch (e) {
+        logWarn('Falha ao limpar accountsSkippedThisLeva:', e && e.message ? e.message : e);
+      }
+
       automationEngine.isRunning = false;
       automationEngine._preservedState = preserved;
     }
@@ -781,6 +794,8 @@ let automationStartTime = null;
 let automationSuccessCount = 0;
 let automationErrorCount = 0;
 let accountsPerformance = {}; // { "Conta 1": { sent: 4, success: 3, errors: 1, errorDetails: [...] } }
+// Contas que devem ser ignoradas durante a leva atual (não persistir entre levas)
+let accountsSkippedThisLeva = new Set();
 let errorsByType = { notAcceptingFriends: 0, usernameNotFound: 0, other: 0 };
 let errorScreenshots = []; // [ { accountName, targetNick, errorType, screenshotPath } ]
 let screenshotsDir = path.join(userDataPath, 'screenshots-temp');
@@ -1867,9 +1882,18 @@ async function loadAccounts() {
         if (!account.name) account.name = `Conta ${index + 1}`;
         if (!account.id) account.id = `account${index + 1}`;
       });
-      
-  // Salvar contas processadas (aguardar conclusão)
-  await writeAccounts(accounts);
+
+      // =============================
+      // TESTE: Paginacao/visualizacao temporaria (NÃO ALTERA/GRAVA `accounts`)
+      // Anteriormente o código sobrescrevia `accounts` com um slice, o que
+      // causou perda acidental de contas ao salvar. Aqui apenas preparamos
+      // uma variável temporária para a UI, sem modificar o array real.
+      let displayAccountsForTest = null;
+      // Removido modo de teste: displayAccountsForTest
+      // =============================
+
+      // Salvar contas processadas (aguardar conclusão)
+      await writeAccounts(accounts);
       log(`✅ ${accounts.length} contas processadas e salvas`);
     } else {
       log('📝 Arquivo de contas não existe. Iniciando com lista vazia em memória (não criando padrões).');
@@ -1892,6 +1916,15 @@ async function loadAccounts() {
   setTimeout(() => {
     preloadFrequentSessions();
   }, 2000);
+
+  // IPC handler temporário para testes: retornar grupo de contas por página
+  try {
+    ipcMain.handle('teste-request-page', (event, args) => {
+      // Handler de teste removido, modo dinâmico restaurado
+    });
+  } catch (e) {
+    logWarn('Não foi possível registrar ipc handler teste-request-page:', e && e.message ? e.message : e);
+  }
 }
 
 // Função saveAccounts removida - usar writeAccounts(accounts) em seu lugar
@@ -3026,16 +3059,16 @@ function logLevaWrite(action, filePath, levaNumber) {
 }
 
 // Salvar progresso da leva (quais contas já foram processadas)
-function saveLevaProgress(levaNumber, processedAccountIds, totalAccountsExpected) {
+function saveLevaProgress(levaNumber, processedCount, totalAccountsExpected) {
   try {
     const progress = {
       levaNumber,
-      processedAccountIds: Array.from(new Set(processedAccountIds)), // Garantir que são únicos
+      processedCount: Array.from(new Set(processedCount)), // Garantir que são únicos
       totalAccountsExpected,
       lastUpdate: new Date().toISOString()
     };
     fs.writeFileSync(levaProgressFilePath, JSON.stringify(progress, null, 2));
-    log(`💾 Progresso da leva salvo: ${processedAccountIds.length}/${totalAccountsExpected} contas processadas`);
+    log(`💾 Progresso da leva salvo: ${processedCount.length}/${totalAccountsExpected} contas processadas`);
     // registrar debug para investigar gravações inesperadas
     try { logLevaWrite('save', levaProgressFilePath, levaNumber); } catch (e) { logWarn('⚠️ logLevaWrite(save) falhou:', e && e.message ? e.message : e); }
   } catch (error) {
@@ -3049,7 +3082,7 @@ function loadLevaProgress() {
     if (fs.existsSync(levaProgressFilePath)) {
       const data = fs.readFileSync(levaProgressFilePath, 'utf8');
       const progress = JSON.parse(data);
-      log(`📂 Progresso da leva carregado: ${progress.processedAccountIds.length}/${progress.totalAccountsExpected} contas`);
+      log(`📂 Progresso da leva carregado: ${progress.processedCount.length}/${progress.totalAccountsExpected} contas`);
       try { logLevaWrite('load', levaProgressFilePath, progress.levaNumber); } catch (e) { logWarn('⚠️ logLevaWrite(load) falhou:', e && e.message ? e.message : e); }
       return progress;
     }
@@ -3068,9 +3101,9 @@ function clearLevaProgress() {
       log('🗑️ Progresso da leva limpo');
       try { logLevaWrite('delete', levaProgressFilePath, null); } catch (e) { logWarn('⚠️ logLevaWrite(delete) falhou:', e && e.message ? e.message : e); }
     }
-    // Garantir que processedAccountIds também seja limpo no progresso principal
-    if (automationProgress && Array.isArray(automationProgress.processedAccountIds)) {
-      automationProgress.processedAccountIds = [];
+    // Garantir que processedCount também seja limpo no progresso principal
+    if (automationProgress && Array.isArray(automationProgress.processedCount)) {
+      automationProgress.processedCount = [];
       saveAutomationProgress();
     }
   } catch (error) {
@@ -3114,8 +3147,8 @@ function isLevaComplete() {
   const progress = loadLevaProgress();
   if (!progress) return false;
   
-  const completed = progress.processedAccountIds.length >= progress.totalAccountsExpected;
-  log(`🎯 Leva ${completed ? 'COMPLETA' : 'INCOMPLETA'}: ${progress.processedAccountIds.length}/${progress.totalAccountsExpected}`);
+  const completed = progress.processedCount.length >= progress.totalAccountsExpected;
+  log(`🎯 Leva ${completed ? 'COMPLETA' : 'INCOMPLETA'}: ${progress.processedCount.length}/${progress.totalAccountsExpected}`);
   return completed;
 }
 
@@ -6736,6 +6769,53 @@ app.whenReady().then(async () => {
       // Filtrar contas baseado nos IDs visíveis
       const visibleAccountIds = automationEngine.accountIds || [];
       const groupAccounts = accounts.filter(acc => visibleAccountIds.includes(acc.id));
+
+      // === BARRIERA DIÁRIA (ENFORCE DAILY LIMIT) ===
+      // Carregar número da leva atual e progresso associado para saber quantas
+      // contas já foram processadas nesta leva. Isso evita processar mais
+      // contas do que o configurado em 'Contas Diárias'.
+      const currentLevaNum_forBarrier = loadLevaCounter();
+      let levaProgress_forBarrier = loadLevaProgress();
+      if (!levaProgress_forBarrier || levaProgress_forBarrier.levaNumber !== currentLevaNum_forBarrier) {
+        levaProgress_forBarrier = { levaNumber: currentLevaNum_forBarrier, processedCount: [], totalAccountsExpected: null };
+      }
+      const alreadyProcessedCount = Array.isArray(levaProgress_forBarrier.processedCount) ? levaProgress_forBarrier.processedCount.length : 0;
+
+      // Carregar configuração de contas diárias (se disponível)
+      let dailyAccountsTotal_forBarrier = null;
+      try {
+        const settingsPath = path.join(userDataPath, 'settings.json');
+        if (fs.existsSync(settingsPath)) {
+          const data = fs.readFileSync(settingsPath, 'utf8');
+          const settings = JSON.parse(data);
+          dailyAccountsTotal_forBarrier = settings.reportIdentification?.totalAccounts || null;
+        }
+      } catch (e) {
+        // Ignorar e permitir fallback
+      }
+
+      // Se não houver configuração, assumir que todas as contas visíveis são permitidas
+      const dailyLimit = (typeof dailyAccountsTotal_forBarrier === 'number' && dailyAccountsTotal_forBarrier > 0) ? dailyAccountsTotal_forBarrier : groupAccounts.length;
+      const remainingAllowed = Math.max(0, dailyLimit - alreadyProcessedCount);
+
+      // Selecionar apenas as contas que podemos processar respeitando a barreira
+      const accountsToProcess = groupAccounts.slice(0, remainingAllowed);
+
+      automationLog(`🔒 Barreira diária: limite=${dailyLimit}, jáProcessadas=${alreadyProcessedCount}, aProcessar=${accountsToProcess.length}`, 'info');
+
+      if (accountsToProcess.length === 0) {
+        automationLog('❌ Limite diário já atingido — nenhuma conta será processada nesta execução.', 'warn');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('automation-error', {
+            message: 'Limite diário de contas atingido para a leva atual.',
+            details: 'Nenhuma conta será processada até que a leva avance ou o limite seja alterado.'
+          });
+        }
+        // Parar a automação de forma limpa
+        automationEngine.isRunning = false;
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('progress-hide');
+        return; // Parar execução de startRealAutomation
+      }
       
       // Mostrar barra de progresso
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -6818,13 +6898,13 @@ app.whenReady().then(async () => {
         automationEngine.currentCiclo = ciclo;
         saveProgress(); // Salvar ciclo atual
         
-        // Processar contas do grupo selecionado
-        const totalAccounts = groupAccounts.length;
+        // Processar contas do grupo selecionado (apenas as permitidas pela barreira)
+        const totalAccounts = (typeof accountsToProcess !== 'undefined') ? accountsToProcess.length : groupAccounts.length;
         automationLog(`📊 Processando ${totalAccounts} contas neste ciclo...`);
         
         // Se estamos continuando, começar do índice salvo; senão começar do 0
         const startFrom = ciclo === startCiclo ? savedAccountIndex : 0;
-        
+
         for (let accountIndex = startFrom; accountIndex < totalAccounts; accountIndex++) {
           automationEngine.currentAccountIndex = accountIndex;
           saveProgress();
@@ -6833,7 +6913,45 @@ app.whenReady().then(async () => {
             automationLog('⏹️ Automação parada pelo usuário');
             break;
           }
-          const account = groupAccounts[accountIndex];
+          const account = (typeof accountsToProcess !== 'undefined') ? accountsToProcess[accountIndex] : groupAccounts[accountIndex];
+          // Quick check: if this account's BrowserView already shows 'limited access', skip immediately.
+          try {
+            const preView = browserViews.get(account.id);
+            if (preView && preView.webContents) {
+              const preLimited = await detectLimitedAccessInstant(preView);
+              if (preLimited) {
+                automationLog(`🚫 Conta detectada como limitada antes de processar: ${account.name}`);
+                try { accountsSkippedThisLeva.add(account.id); } catch (e) { logWarn('Falha ao marcar account skipped (pre):', e && e.message ? e.message : e); }
+                recordAccountPerformance(account.name, false, 'limitedAccess', 'Skipped due to persistent limited access (pre-check)');
+                try { errorsByType.other++; } catch (e) { /* ignore */ }
+                automationErrorCount++;
+                saveIncrementalStats();
+                sendProgressUpdate(ciclo, accountIndex, totalAccounts);
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  mainWindow.webContents.send('stats-update', { success: false, error: true, totalAccounts, maxInvites: totalAccounts * 4 });
+                }
+                continue;
+              }
+            }
+          } catch (e) {
+            logWarn('Pre-check detectLimitedAccessPolling erro:', e && e.message ? e.message : e);
+          }
+          // Se esta conta foi marcada como limitada durante a leva atual, pular sem consumir nick
+          if (accountsSkippedThisLeva && accountsSkippedThisLeva.has && accountsSkippedThisLeva.has(account.id)) {
+            automationLog(`⏭️ Pulando conta (marcada como limitada nesta leva): ${account.name}`);
+            // Registrar desempenho como 'limitedAccess' para aparecer como 'Outro' no PDF
+            recordAccountPerformance(account.name, false, 'limitedAccess', 'Skipped due to limited access during this leva');
+            // Incrementar contadores de erro
+            try { errorsByType.other++; } catch (e) { /* ignore */ }
+            automationErrorCount++;
+            saveIncrementalStats();
+            sendProgressUpdate(ciclo, accountIndex, totalAccounts);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('stats-update', { success: false, error: true, totalAccounts, maxInvites: totalAccounts * 4 });
+            }
+            continue;
+          }
+
           // FIFO: pega e remove o próximo nick
           const currentNick = await claimNextNick();
           if (!currentNick) {
@@ -6944,6 +7062,27 @@ app.whenReady().then(async () => {
               const immediate = await checkImmediateErrorAndCapture(account.name, currentNick);
               if (immediate && immediate.found) {
                 automationLog(`⚠️ Erro imediato detectado após clicar: ${immediate.error} - pulando conta`);
+
+                // Special case: limited access -> skip this account for the remainder of the current leva
+                if (String(immediate.error || '').toLowerCase().indexOf('limitedaccess') >= 0 || String(immediate.error || '').toLowerCase().indexOf('limited access') >= 0) {
+                  automationLog(`🚫 Conta marcada como limitada durante esta leva: ${account.name}`);
+                  try { accountsSkippedThisLeva.add(account.id); } catch(e) { logWarn('Falha ao marcar account skipped:', e && e.message ? e.message : e); }
+
+                  automationEngine.currentNickIndex++;
+                  automationEngine.totalInvitesSent++;
+                  saveProgress();
+                  recordAccountPerformance(account.name, false, 'limitedAccess', 'Account limited access detected');
+                  // Registrar contagem de erro em 'other' para refletir no PDF como 'Outro'
+                  try { errorsByType.other++; } catch (e) { /* ignore */ }
+                  automationErrorCount++;
+                  saveIncrementalStats();
+                  sendProgressUpdate(ciclo, accountIndex, totalAccounts);
+                  if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('stats-update', { success: false, error: true, totalAccounts, maxInvites: totalAccounts * 4 });
+                  }
+                  continue;
+                }
+
                 // Tratar como erro 'notAccepting' se texto indicar isso
                 const errType = (String(immediate.error || '').indexOf('not accepting') >= 0 || String(immediate.error || '').indexOf('não aceita') >= 0) ? 'notAcceptingFriends' : 'other';
                 automationEngine.currentNickIndex++;
@@ -6963,6 +7102,33 @@ app.whenReady().then(async () => {
             }
 
             // Aguardar se pausado
+            // --- Verificação adicional: polling para detectar 'limited access' que apareça um pouco depois ---
+            try {
+                const currentView = getCurrentBrowserView();
+              if (currentView && currentView.webContents) {
+                const lateLimited = await detectLimitedAccessInstant(currentView);
+                if (lateLimited) {
+                  automationLog(`🚫 Conta marcada como limitada (detecção tardia): ${account.name}`);
+                  try { accountsSkippedThisLeva.add(account.id); } catch(e) { logWarn('Falha ao marcar account skipped:', e && e.message ? e.message : e); }
+
+                  automationEngine.currentNickIndex++;
+                  automationEngine.totalInvitesSent++;
+                  saveProgress();
+                  recordAccountPerformance(account.name, false, 'limitedAccess', 'Account limited access detected (late poll)');
+                  try { errorsByType.other++; } catch (err) { /* ignore */ }
+                  automationErrorCount++;
+                  saveIncrementalStats();
+                  sendProgressUpdate(ciclo, accountIndex, totalAccounts);
+                  if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('stats-update', { success: false, error: true, totalAccounts, maxInvites: totalAccounts * 4 });
+                  }
+                  continue;
+                }
+              }
+            } catch (e) {
+              logWarn('Erro em detectLimitedAccessPolling:', e && e.message ? e.message : e);
+            }
+
             await waitWhilePaused();
             
             // Aguardar e detectar captcha
@@ -7321,30 +7487,31 @@ app.whenReady().then(async () => {
         }
         levaProgress = {
           levaNumber: currentLevaNum,
-          processedAccountIds: [],
+          processedCount: [],
           totalAccountsExpected: dailyAccountsTotal || visibleAccountIds.length
         };
       }
       
-      // Adicionar contas recém-processadas
-      visibleAccountIds.forEach(id => {
-        if (!levaProgress.processedAccountIds.includes(id)) {
-          levaProgress.processedAccountIds.push(id);
+      // Adicionar contas recém-processadas (apenas as que realmente processamos nesta execução)
+      const processedThisRunIds = (typeof accountsToProcess !== 'undefined') ? accountsToProcess.map(a => a.id) : visibleAccountIds;
+      processedThisRunIds.forEach(id => {
+        if (!levaProgress.processedCount.includes(id)) {
+          levaProgress.processedCount.push(id);
         }
       });
       
       // Salvar progresso atualizado
       saveLevaProgress(
         levaProgress.levaNumber,
-        levaProgress.processedAccountIds,
+        levaProgress.processedCount,
         levaProgress.totalAccountsExpected
       );
       
       // Verificar se leva está completa
-      const levaCompleta = levaProgress.processedAccountIds.length >= levaProgress.totalAccountsExpected;
+      const levaCompleta = levaProgress.processedCount.length >= levaProgress.totalAccountsExpected;
       
       automationLog(
-        `\n📊 Progresso: ${levaProgress.processedAccountIds.length}/${levaProgress.totalAccountsExpected} contas processadas`
+        `\n📊 Progresso: ${levaProgress.processedCount.length}/${levaProgress.totalAccountsExpected} contas processadas`
       );
       
       if (levaCompleta) {
@@ -7401,7 +7568,7 @@ app.whenReady().then(async () => {
         }
       } else {
         // ⏳ LEVA INCOMPLETA: NÃO incrementar, NÃO enviar relatório
-        const remaining = levaProgress.totalAccountsExpected - levaProgress.processedAccountIds.length;
+        const remaining = levaProgress.totalAccountsExpected - levaProgress.processedCount.length;
         automationLog(`\n⏳ ===== LEVA ${currentLevaNum}/6 EM ANDAMENTO =====`);
         automationLog(`📌 Faltam ${remaining} contas para completar esta leva.`);
         automationLog(`💡 Mude para a próxima página e rode a automação novamente!`);
@@ -7410,7 +7577,7 @@ app.whenReady().then(async () => {
         // ✅ ENVIAR NOTIFICAÇÃO VISUAL PARA O RENDERER
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('leva-incompleta', {
-            processed: levaProgress.processedAccountIds.length,
+            processed: levaProgress.processedCount.length,
             total: levaProgress.totalAccountsExpected,
             remaining: remaining,
             levaNumber: currentLevaNum
@@ -8133,9 +8300,15 @@ app.whenReady().then(async () => {
             (function(){
               try {
                 const checks = [];
+                // Modal central
                 const modal = document.querySelector('div[role="dialog"][aria-modal="true"]');
                 if (modal) checks.push(modal.textContent || '');
 
+                // Inline warning (abaixo do input)
+                const inlineWarning = document.querySelector('div[role="alert"], div[class*="marginTop8"], div[class*="headerSubtitle"], div[class*="text-sm"], p, span');
+                if (inlineWarning) checks.push(inlineWarning.textContent || '');
+
+                // Todos os textos relevantes
                 const inlineSelectors = [
                   'div[role="alert"]',
                   'div[class*="marginTop8"]',
@@ -8152,15 +8325,26 @@ app.whenReady().then(async () => {
                 checks.push(document.body && document.body.textContent ? document.body.textContent : '');
                 const text = checks.join('\n').toLowerCase();
 
+                // Padrões de erro
                 const patterns = [
                   'not accepting', 'not accepting friend', 'is not accepting',
                   'não aceita', 'não aceita pedidos', 'pedido de amizade',
                   'friend request failed', "didn't work", 'hm,', 'double-check',
-                  'username is correct', 'user not found'
+                  'username is correct', 'user not found',
+                  'limited access', 'your account has limited access', 'has limited your access'
                 ];
+
+                // Detecção reforçada: se encontrar qualquer texto de limited access, retorna imediatamente
+                if (text.indexOf('your account has limited access') >= 0 || text.indexOf('limited access') >= 0 || text.indexOf('has limited your access') >= 0) {
+                  return { found: true, error: 'limitedAccess', needsScreenshot: false };
+                }
 
                 for (const p of patterns) {
                   if (text.indexOf(p) >= 0) {
+                    const lowered = p.toLowerCase();
+                    if (lowered.indexOf('limited access') >= 0) {
+                      return { found: true, error: 'limitedAccess', needsScreenshot: false };
+                    }
                     const needsScreenshot = !!modal || p.indexOf('didn')>=0 || p.indexOf('hm,')>=0;
                     return { found: true, error: p, needsScreenshot };
                   }
@@ -8206,14 +8390,78 @@ app.whenReady().then(async () => {
         await sleep(90);
       }
 
-      return { found: false };
+        // Fallback robusto: se as tentativas JS complexas falharam (por exemplo safeExecuteJS retornou null),
+        // tentar um fetch simples do texto da página e procurar por 'limited access' — isso é mais resistente
+        try {
+          automationLog('🔍 [DEBUG] Executando fallback: document.body.innerText', 'info');
+          const simpleText = await safeExecuteJS(currentView, `(function(){ try { return document.body ? (document.body.innerText || document.body.textContent) : ''; } catch(e){ return ''; } })();`);
+          automationLog(`🔍 [DEBUG] Resultado fallback: ${typeof simpleText === 'string' ? simpleText.substring(0, 200) : String(simpleText)}`, 'info');
+          if (simpleText && typeof simpleText === 'string') {
+            const lower = simpleText.toLowerCase();
+            if (lower.indexOf('your account has limited access') >= 0 || lower.indexOf('limited access') >= 0 || lower.indexOf('has limited your access') >= 0) {
+              automationLog(`🔎 Detecção fallback: 'limited access' encontrado via simple body text`, 'warn');
+              return { found: true, error: 'limitedAccess' };
+            }
+          } else {
+            logWarn('checkImmediateErrorAndCapture: fallback simpleText returned null/empty');
+          }
+          // Fallback extra: buscar texto do modal e do alerta
+          automationLog('🔍 [DEBUG] Executando fallback extra: modal e alert', 'info');
+          const modalText = await safeExecuteJS(currentView, `(function(){ try { var m=document.querySelector('div[role="dialog"][aria-modal="true"]'); return m?m.textContent:''; } catch(e){ return ''; } })();`);
+          automationLog(`🔍 [DEBUG] Resultado modal: ${typeof modalText === 'string' ? modalText.substring(0, 200) : String(modalText)}`, 'info');
+          if (modalText && typeof modalText === 'string') {
+            const lower = modalText.toLowerCase();
+            if (lower.indexOf('your account has limited access') >= 0 || lower.indexOf('limited access') >= 0 || lower.indexOf('has limited your access') >= 0) {
+              automationLog(`🔎 Detecção fallback: 'limited access' encontrado via modal`, 'warn');
+              return { found: true, error: 'limitedAccess' };
+            }
+          }
+          const alertText = await safeExecuteJS(currentView, `(function(){ try { var a=document.querySelector('div[role="alert"]'); return a?a.textContent:''; } catch(e){ return ''; } })();`);
+          automationLog(`🔍 [DEBUG] Resultado alert: ${typeof alertText === 'string' ? alertText.substring(0, 200) : String(alertText)}`, 'info');
+          if (alertText && typeof alertText === 'string') {
+            const lower = alertText.toLowerCase();
+            if (lower.indexOf('your account has limited access') >= 0 || lower.indexOf('limited access') >= 0 || lower.indexOf('has limited your access') >= 0) {
+              automationLog(`🔎 Detecção fallback: 'limited access' encontrado via alert`, 'warn');
+              return { found: true, error: 'limitedAccess' };
+            }
+          }
+        } catch (e) {
+          logWarn('checkImmediateErrorAndCapture fallback error:', e && e.message ? e.message : e);
+        }
+
+        return { found: false };
     } catch (e) {
       logWarn('checkImmediateErrorAndCapture erro:', e && e.message ? e.message : e);
       return { found: false };
     }
   }
   
-  async function waitForCaptcha(targetNick = 'Desconhecido', accountName = 'Desconhecida', webhookUrl = '') {
+    // Instant helper to detect 'limited access' messages with a single fast check.
+    // Returns true if the text appears in body/modal/alert.
+    async function detectLimitedAccessInstant(view) {
+      try {
+        if (!view || !view.webContents) return false;
+        const simpleText = await safeExecuteJS(view, `(function(){ try { return document.body ? (document.body.innerText || document.body.textContent) : ''; } catch(e){ return ''; } })();`);
+        if (simpleText && typeof simpleText === 'string') {
+          const lower = simpleText.toLowerCase();
+          if (lower.indexOf('your account has limited access') >= 0 || lower.indexOf('limited access') >= 0 || lower.indexOf('has limited your access') >= 0) {
+            return true;
+          }
+        }
+        const modalText = await safeExecuteJS(view, `(function(){ try { var m=document.querySelector('div[role="dialog"][aria-modal="true"]'); return m?m.textContent:''; } catch(e){ return ''; } })();`);
+        if (modalText && typeof modalText === 'string' && modalText.toLowerCase().indexOf('limited access') >= 0) return true;
+        const alertText = await safeExecuteJS(view, `(function(){ try { var a=document.querySelector('div[role="alert"]'); return a?a.textContent:''; } catch(e){ return ''; } })();`);
+        if (alertText && typeof alertText === 'string' && alertText.toLowerCase().indexOf('limited access') >= 0) return true;
+        return false;
+      } catch (e) {
+        logWarn('detectLimitedAccessInstant erro:', e && e.message ? e.message : e);
+        return false;
+      }
+    }
+
+    
+
+    async function waitForCaptcha(targetNick = 'Desconhecido', accountName = 'Desconhecida', webhookUrl = '') {
     automationLog(`🤖 Detectando e aguardando captcha...`);
     
     try {
