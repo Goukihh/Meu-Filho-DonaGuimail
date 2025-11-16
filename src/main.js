@@ -1,7 +1,5 @@
 const { app, BrowserWindow, BrowserView, ipcMain, session, dialog } = require('electron');
-// =============================
-// =============================
-// Modo dinâmico restaurado: contas por aba será calculado conforme resolução
+//contas dinamicas por aba será calculado conforme resolução
 const path = require('path');
 const fs = require('fs');
 const archiver = require('archiver');
@@ -12,6 +10,7 @@ const PDFDocument = require('pdfkit');
 // Módulos auxiliares centralizados
 const fileOps = require('./main/fileOps');
 const webhookManager = require('./main/webhook');
+const nicksManager = require('./main/nicks-manager');
 const selectorsCode = fs.readFileSync(path.join(__dirname, 'main', 'selectors.js'), 'utf8');
 
 // Sistema de logs condicionais + ARQUIVO DE DEBUG
@@ -159,6 +158,8 @@ function loadAutomationProgress() {
         if (typeof automationProgress.totalInvitesSent !== 'number') automationProgress.totalInvitesSent = 0;
         if (typeof automationProgress.currentCiclo !== 'number') automationProgress.currentCiclo = 0;
         if (typeof automationProgress.currentAccountIndex !== 'number') automationProgress.currentAccountIndex = 0;
+        // Compat: garantir campo currentAccountId existe
+        if (typeof automationProgress.currentAccountId === 'undefined') automationProgress.currentAccountId = null;
       }
     } catch (e) {
       logWarn('Erro ao carregar automation-progress.json:', e);
@@ -181,6 +182,20 @@ async function saveProgressAtomic() {
       automationProgress.totalInvitesSent = typeof automationEngine.totalInvitesSent === 'number' ? automationEngine.totalInvitesSent : (automationProgress.totalInvitesSent || 0);
       automationProgress.currentCiclo = typeof automationEngine.currentCiclo === 'number' ? automationEngine.currentCiclo : (automationProgress.currentCiclo || 0);
       automationProgress.currentAccountIndex = typeof automationEngine.currentAccountIndex === 'number' ? automationEngine.currentAccountIndex : (automationProgress.currentAccountIndex || 0);
+      // Persistir também o ID da conta atual (ajuda restauração quando fatias mudam)
+      try {
+        // Persistir explicitamente o valor de currentAccountId da engine.
+        // Usar `||` aqui fazia com que um `null` da engine fosse ignorado
+        // e o valor antigo permanecesse no arquivo. Queremos que quando
+        // a engine zere/limpe o campo, o arquivo reflita isso (null).
+        if (automationEngine && Object.prototype.hasOwnProperty.call(automationEngine, 'currentAccountId')) {
+          automationProgress.currentAccountId = automationEngine.currentAccountId;
+        } else {
+          automationProgress.currentAccountId = automationProgress.currentAccountId || null;
+        }
+      } catch (e) {
+        automationProgress.currentAccountId = automationProgress.currentAccountId || null;
+      }
       automationProgress.webhookUrl = automationEngine.webhookUrl || automationProgress.webhookUrl || null;
       // Sincronizar processedCount se disponível na engine
       if (Array.isArray(automationEngine.processedCount)) {
@@ -224,10 +239,11 @@ function resetAutomationProgress() {
 
   const op = (async () => {
     try {
+      const atomicFlag = (typeof SAFE_ATOMIC_WRITES !== 'undefined') ? SAFE_ATOMIC_WRITES : true;
       await fileOps.saveJSON(automationProgressPath, progressToSave, {
         createBackup: true,
         validate: true,
-        atomic: SAFE_ATOMIC_WRITES,
+        atomic: atomicFlag,
       });
       log(`💾 Progresso salvo: ${JSON.stringify({ currentNickIndex: progressToSave.currentNickIndex, totalInvitesSent: progressToSave.totalInvitesSent })}`);
     } catch (e) {
@@ -253,224 +269,66 @@ function saveAutomationProgress() {
   return saveProgressAtomic().catch(e => logWarn('saveAutomationProgress erro:', e));
 }
 
-const usedNicksPath = path.join(userDataPath, 'used-nicks.json');
-// Limite para evitar que used-nicks cresça indefinidamente
-const USED_NICKS_MAX = 1000; // quando exceder, vamos podar
-const USED_NICKS_KEEP = 1;   // quantos últimos manter (1 = apenas o último)
-
+// Nota: o registro de "used nicks" foi simplificado para evitar persistência
+// problemática. Mantemos um log em memória apenas para evitar duplicatas
+// óbvias durante a execução, mas não gravamos/lemos mais `used-nicks.json`.
 let usedNicksSet = new Set();
 
 function loadUsedNicks() {
-  if (fs.existsSync(usedNicksPath)) {
-    try {
-      const data = fs.readFileSync(usedNicksPath, 'utf8');
-      const arr = JSON.parse(data);
-      if (Array.isArray(arr)) {
-        usedNicksSet = new Set(arr);
-      }
-    } catch (e) {
-      logWarn('Erro ao carregar used-nicks.json:', e);
-    }
-  }
+  // noop: não carregamos mais used-nicks do disco (mantemos em memória apenas)
+  usedNicksSet = new Set();
 }
 
-function pruneUsedNicksIfNeeded(latestNick) {
-  try {
-    if (usedNicksSet.size > USED_NICKS_MAX) {
-      // Manter apenas os últimos N (em ordem de inserção)
-      const keep = Array.from(usedNicksSet).slice(-USED_NICKS_KEEP);
-      // Garantir que o latestNick esteja incluído (por segurança)
-      if (latestNick && !keep.includes(latestNick)) {
-        keep.push(latestNick);
-        // manter apenas últimos USED_NICKS_KEEP se necessário
-        if (keep.length > USED_NICKS_KEEP) {
-          keep.splice(0, keep.length - USED_NICKS_KEEP);
-        }
-      }
-      usedNicksSet = new Set(keep);
-      log(`🧹 used-nicks podado para ${usedNicksSet.size} entradas (limite ${USED_NICKS_MAX})`);
-    }
-  } catch (e) {
-    // Não bloquear a gravação se a poda falhar
-    logWarn('Falha ao podar used-nicks:', e);
-  }
+function pruneUsedNicksIfNeeded() {
+  // noop: remoção/poda desabilitada (não persistimos)
 }
 
 function saveUsedNick(nick) {
-  usedNicksSet.add(nick);
-  // Poda se necessário antes de persistir
-  pruneUsedNicksIfNeeded(nick);
-
-  // Gravação assíncrona não-bloqueante; fallback assíncrono também para evitar bloquear o main thread
-  (async () => {
-    try {
-      await fileOps.saveJSON(usedNicksPath, Array.from(usedNicksSet), {
-        createBackup: true,
-        validate: true,
-        atomic: SAFE_ATOMIC_WRITES,
-      });
-    } catch (e) {
-      logWarn('Erro ao salvar used-nicks.json (async):', e && e.message ? e.message : e);
-      try {
-        // Fallback assíncrono simples
-        await fileOps.writeText(usedNicksPath, JSON.stringify(Array.from(usedNicksSet), null, 2));
-      } catch (err) {
-        logWarn('Erro no fallback assíncrono ao salvar used-nicks:', err && err.message ? err.message : err);
-      }
-    }
-  })();
+  // Apenas registrar em memória (não persistir em disco)
+  try { usedNicksSet.add(nick); } catch (e) { /* ignore */ }
 }
 // --- NOVA LÓGICA DE NICKS ---
-const loadedNicksPath = path.join(userDataPath, 'loaded-nicks.json');
-let loadedNicksList = [];
+// `nicksManager` é a fonte de verdade; evitar variáveis globais duplicadas
 
 function loadLoadedNicks() {
-  if (fs.existsSync(loadedNicksPath)) {
-    try {
-      const data = fs.readFileSync(loadedNicksPath, 'utf8');
-      const obj = JSON.parse(data);
-      if (Array.isArray(obj.nicks)) {
-        // Carregar lista e remover imediatamente qualquer nick que já esteja marcado como usado.
-        loadedNicksList = obj.nicks.filter(n => !usedNicksSet.has(n));
-        // Se houve remoções por conta de nicks já usados, persistir a lista limpa
-        if (loadedNicksList.length !== obj.nicks.length) {
-          log(`🔄 loaded-nicks filtrado para remover ${obj.nicks.length - loadedNicksList.length} nicks já usados`);
-          try {
-            // Persistir lista filtrada para evitar que reinícios tragam nicks já usados de volta
-            saveLoadedNicks();
-          } catch (e) {
-            logWarn('Falha ao salvar loaded-nicks filtrado:', e && e.message ? e.message : e);
-          }
-        }
-      }
-    } catch (e) {
-      logWarn('Erro ao carregar loaded-nicks.json:', e);
-    }
-  }
-  // Broadcast to renderer (if ready) the initial count of loaded nicks
+  // Delegar carregamento para nicksManager (fonte de verdade)
   try {
-    if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('automation-nicks-status', { count: loadedNicksList.length });
-    } else {
-      // If mainWindow not ready yet, postpone a little and try again
-      setTimeout(() => {
-        try {
-          if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('automation-nicks-status', { count: loadedNicksList.length });
-          }
-        } catch (e) {
-          // ignore
-        }
-      }, 800);
-    }
-  } catch (e) {
-    // ignore broadcasting errors
-  }
-}
-
-function saveLoadedNicks() {
-  // Serializar gravações para evitar race conditions entre writers
-  if (!global.loadedNicksWriteQueue) global.loadedNicksWriteQueue = Promise.resolve();
-
-  // Antes de salvar, garantir que não iremos persistir nicks que já constam em used-nicks
-  const sanitized = Array.isArray(loadedNicksList) ? loadedNicksList.filter(n => !usedNicksSet.has(n)) : [];
-  const payload = { nicks: sanitized };
-
-  const op = (async () => {
-    try {
-      // Tentar escrever de forma atômica via fileOps
-      await fileOps.saveJSON(loadedNicksPath, payload, {
-        createBackup: true,
-        validate: true,
-        atomic: SAFE_ATOMIC_WRITES,
-      });
-      console.log(`[DEBUG] saved loaded-nicks.json (${loadedNicksList.length} nicks)`);
-      // Notificar renderer sobre o novo número de nicks restantes
+    nicksManager.load();
+    // nothing else to do; renderer will be notified with the current count
+    // Broadcast to renderer (if ready) the initial count of loaded nicks
+    const sendCount = () => {
       try {
         if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('automation-nicks-status', { count: sanitized.length });
+          mainWindow.webContents.send('automation-nicks-status', { count: nicksManager.getCount() });
         }
-      } catch (e) {
-        // ignore
-      }
-    } catch (err) {
-      logWarn('Erro ao salvar loaded-nicks.json de forma atômica:', err && err.message ? err.message : err);
-      // Fallback síncrono para garantir persistência em caso de falha
-      try {
-        fs.writeFileSync(loadedNicksPath, JSON.stringify(payload, null, 2), 'utf8');
-        console.log(`[DEBUG] saved loaded-nicks.json (fallback sync) (${sanitized.length} nicks)`);
-        // Notificar renderer sobre o novo número de nicks restantes (fallback path)
-        try {
-          if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('automation-nicks-status', { count: sanitized.length });
-          }
-        } catch (e) {
-          // ignore
-        }
-      } catch (e) {
-        logError('Erro ao salvar loaded-nicks.json (fallback):', e);
-      }
-    }
-  })();
-
-  // Encadear na fila global para serializar
-  global.loadedNicksWriteQueue = global.loadedNicksWriteQueue.then(() => op).catch(() => op);
-  return op;
-}
-
-function getNextNick() {
-  if (loadedNicksList.length === 0) return null;
-  // Pega o primeiro nick disponível
-  return loadedNicksList[0];
+      } catch (e) { /* ignore */ }
+    };
+    sendCount();
+    // If mainWindow not ready yet, postpone a little and try again
+    setTimeout(sendCount, 800);
+  } catch (e) {
+    logWarn('Erro ao carregar nicks via nicksManager:', e && e.message ? e.message : e);
+  }
 }
 
 // Atomically claim and remove the next nick from the persisted list.
 // This guarantees that once a nick is handed out it is removed from disk
 // and recorded in used-nicks, preventing duplicates even across restarts.
 async function claimNextNick() {
-  // FIFO: sempre pega o primeiro da lista
-  if (loadedNicksList.length === 0) return null;
-  const candidate = loadedNicksList[0];
-  if (!candidate) return null;
-  if (usedNicksSet.has(candidate)) {
-    // Se por algum motivo o nick já está em usados, remove e tenta o próximo
-    loadedNicksList.shift();
-    await saveLoadedNicks();
-    return await claimNextNick();
-  }
-  // Remove o nick da lista
-  loadedNicksList.shift();
-  await saveLoadedNicks();
-  // Adiciona em usados e salva
-  usedNicksSet.add(candidate);
-  pruneUsedNicksIfNeeded(candidate);
-  try {
-    await fileOps.saveJSON(usedNicksPath, Array.from(usedNicksSet), {
-      createBackup: true,
-      validate: true,
-      atomic: SAFE_ATOMIC_WRITES,
-    });
-  } catch (e) {
-    try {
-      fs.writeFileSync(usedNicksPath, JSON.stringify(Array.from(usedNicksSet), null, 2), 'utf8');
-    } catch (err) {
-      logWarn('Erro ao persistir used-nicks após claimNextNick:', err);
-    }
-  }
-  // Atualiza engine em memória
+  // Operação atômica via nicksManager
+  const nick = nicksManager.claimNext();
   if (automationEngine && Array.isArray(automationEngine.nicksList)) {
-    automationEngine.nicksList = [...loadedNicksList];
+    automationEngine.nicksList = nicksManager.getList();
   }
-  // Notifica renderer
   try {
     if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('automation-nicks-status', { count: loadedNicksList.length });
+      mainWindow.webContents.send('automation-nicks-status', { count: nicksManager.getCount() });
     }
   } catch (e) {
     // ignore
   }
-  console.log(`[DEBUG] claimNextNick -> ${candidate}`);
-  return candidate;
+  console.log(`[DEBUG] claimNextNick -> ${nick}`);
+  return nick;
 }
 
 function useNick(nick) {
@@ -487,20 +345,11 @@ function useNick(nick) {
         usedNicksSet.add(nick);
         // Podar se exceder limite (mantém only latest)
         pruneUsedNicksIfNeeded(nick);
-        // persist used-nicks
+        // Persistência desabilitada: apenas registrar em memória
         try {
-          await fileOps.saveJSON(usedNicksPath, Array.from(usedNicksSet), {
-            createBackup: true,
-            validate: true,
-            atomic: SAFE_ATOMIC_WRITES,
-          });
+          saveUsedNick(nick);
         } catch (err) {
-          // fallback
-          try {
-            fs.writeFileSync(usedNicksPath, JSON.stringify(Array.from(usedNicksSet), null, 2), 'utf8');
-          } catch (ee) {
-            logWarn('Erro ao persistir used-nicks (fallback):', ee);
-          }
+          logWarn('Falha ao registrar used-nick em memória:', err);
         }
       }
     } catch (e) {
@@ -523,13 +372,14 @@ function useNick(nick) {
 
 // Chamar loadLoadedNicks() na inicialização do app
 loadLoadedNicks();
-// Se loadedNicksList está vazia após o carregamento, inicializar a partir de nicks.txt
-if (!Array.isArray(loadedNicksList) || loadedNicksList.length === 0) {
+// Se a fonte de nicks está vazia após o carregamento, inicializar a partir de nicks.txt
+if (typeof nicksManager.getCount === 'function' ? nicksManager.getCount() === 0 : true) {
   const nicksPath = path.join(__dirname, 'nicks.txt');
   if (fs.existsSync(nicksPath)) {
     const content = fs.readFileSync(nicksPath, 'utf8');
-    loadedNicksList = content.split('\n').map(n => n.trim()).filter(n => n.length > 0 && !usedNicksSet.has(n));
-    saveLoadedNicks();
+    const arr = content.split('\n').map(n => n.trim()).filter(n => n.length > 0);
+    nicksManager.setList(arr);
+    try { /* nicksManager.setList already saves */ } catch (e) { logWarn('Falha ao definir nicks iniciais via nicksManager:', e); }
     log('🔄 loadedNicksList inicializada a partir de nicks.txt');
   }
 }
@@ -806,7 +656,6 @@ let screenshotsDir = path.join(userDataPath, 'screenshots-temp');
 
 // Carregar lista de nicks do arquivo
 validateAndRestoreCriticalFile(accountsFilePath, 50); // Exige pelo menos 50 caracteres para accounts.json
-validateAndRestoreCriticalFile(usedNicksPath, 5); // Exige pelo menos 5 caracteres para used-nicks.json
 validateAndRestoreCriticalFile(progressFilePath, 5); // Exige pelo menos 5 caracteres para automation-progress.json
 
 // ====== BACKUP E RESTAURAÇÃO DE ACCOUNTS.JSON ======
@@ -941,13 +790,15 @@ loadUsedNicks();
 // Após carregar nicks e usados, garantir que o índice aponte para o próximo nick não usado
 function recalculateNickIndex() {
   // Se a lista de nicks foi filtrada, o índice pode estar fora do range
-  if (!Array.isArray(nicksList) || nicksList.length === 0) {
+  const currentList = (typeof nicksManager !== 'undefined' && typeof nicksManager.getList === 'function') ? nicksManager.getList() : (Array.isArray(nicksList) ? nicksList : []);
+  if (!Array.isArray(currentList) || currentList.length === 0) {
     automationProgress.currentNickIndex = 0;
+    saveAutomationProgress();
     return;
   }
   // Encontrar o primeiro nick não usado
   let nextIndex = 0;
-  while (nextIndex < nicksList.length && usedNicksSet.has(nicksList[nextIndex])) {
+  while (nextIndex < currentList.length && usedNicksSet.has(currentList[nextIndex])) {
     nextIndex++;
   }
   automationProgress.currentNickIndex = nextIndex;
@@ -956,22 +807,22 @@ function recalculateNickIndex() {
 recalculateNickIndex();
 async function loadNicksList() {
   try {
-    const nicksPath = path.join(__dirname, 'nicks.txt');
-    if (fs.existsSync(nicksPath)) {
-      const content = fs.readFileSync(nicksPath, 'utf8');
-      nicksList = content
-        .split('\n')
-        .map(nick => nick.trim())
-        .filter(nick => nick.length > 0);
-      // Filtrar nicks já usados para evitar reutilização após reload/reset
-      const beforeCount = nicksList.length;
-      nicksList = nicksList.filter(nick => !usedNicksSet.has(nick));
-      if (nicksList.length !== beforeCount) {
-        log(`🔄 nicks.txt filtrado para remover ${beforeCount - nicksList.length} nicks já usados`);
+    // Delegar carregamento para o nicksManager (fonte de verdade)
+    try {
+      if (typeof nicksManager !== 'undefined' && typeof nicksManager.load === 'function') {
+        nicksManager.load();
       }
-      log(`📋 ${nicksList.length} nicks carregados do arquivo`);
-    } else {
-      log('⚠️ Arquivo nicks.txt não encontrado');
+      nicksList = typeof nicksManager.getList === 'function' ? nicksManager.getList() : [];
+      log(`📋 ${nicksList.length} nicks carregados via nicksManager`);
+      // Notificar renderer
+      try {
+        if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('automation-nicks-status', { count: typeof nicksManager.getCount === 'function' ? nicksManager.getCount() : nicksList.length });
+        }
+      } catch (e) { /* ignore */ }
+    } catch (e) {
+      logWarn('Erro ao carregar nicks via nicksManager:', e && e.message ? e.message : e);
+      nicksList = [];
     }
   } catch (error) {
     logError('Erro ao carregar lista de nicks:', error);
@@ -5153,102 +5004,24 @@ app.whenReady().then(async () => {
       // Carregar progresso salvo para restaurar estado
       const savedProgress = loadProgress();
       
-      // ✅ CARREGAR nicks do arquivo persistente (igual ao webhook)
-      const nicksFilePath = path.join(userDataPath, 'loaded-nicks.json');
+      // ✅ CARREGAR nicks usando o `nicksManager` como fonte de verdade
       let loadedNicks = [];
-      
-      log(`🔍 [DEBUG] Caminho do arquivo de nicks: ${nicksFilePath}`);
-      log(`🔍 [DEBUG] Arquivo existe? ${fs.existsSync(nicksFilePath)}`);
-      
-      // Tentar carregar do arquivo primeiro
-      if (fs.existsSync(nicksFilePath)) {
-        try {
-          log(`🔍 [DEBUG] Lendo arquivo de nicks...`);
-          const nicksData = fs.readFileSync(nicksFilePath, 'utf8');
-          log(`🔍 [DEBUG] Tamanho do arquivo: ${nicksData.length} caracteres`);
-          log(`🔍 [DEBUG] Primeiros 100 caracteres: ${nicksData.substring(0, 100)}`);
-          
-          const parsed = JSON.parse(nicksData);
-          log(`🔍 [DEBUG] JSON parseado com sucesso!`);
-          log(`🔍 [DEBUG] Estrutura do JSON: ${JSON.stringify(Object.keys(parsed))}`);
-          
-          loadedNicks = parsed.nicks || [];
-          log(`📂 ✅ ${loadedNicks.length} nicks carregados do arquivo persistente`);
-          log(`🔍 [DEBUG] Primeiros 3 nicks: ${loadedNicks.slice(0, 3).join(', ')}`);
-        } catch (error) {
-          logWarn('⚠️ Erro ao carregar nicks do arquivo persistente:', error);
-          log(`🔍 [DEBUG] Erro detalhado: ${error.message}`);
-          log(`🔍 [DEBUG] Stack: ${error.stack}`);
-
-          // Attempt automatic recovery from backups if parse failed or file is truncated
+      try {
+        // Tenta o cache interno primeiro
+        loadedNicks = Array.isArray(nicksManager.getList) ? nicksManager.getList() : [];
+        // Se estiver vazio, peça para o manager carregar do disco
+        if ((!Array.isArray(loadedNicks) || loadedNicks.length === 0) && typeof nicksManager.load === 'function') {
           try {
-            const dir = path.dirname(nicksFilePath);
-            const baseName = path.basename(nicksFilePath);
-            const backups = fs.existsSync(dir)
-              ? fs.readdirSync(dir).filter(f => f.startsWith(baseName + '.backup'))
-              : [];
-
-            backups.sort((a, b) => {
-              try {
-                return fs.statSync(path.join(dir, b)).mtimeMs - fs.statSync(path.join(dir, a)).mtimeMs;
-              } catch (e) { return 0; }
-            });
-
-            let restored = false;
-            for (const backup of backups) {
-              try {
-                const backupPath = path.join(dir, backup);
-                const content = fs.readFileSync(backupPath, 'utf8');
-                const parsedBackup = JSON.parse(content);
-                if (parsedBackup && Array.isArray(parsedBackup.nicks) && parsedBackup.nicks.length > 0) {
-                  // Restore the most recent valid backup
-                  fs.copyFileSync(backupPath, nicksFilePath);
-                  loadedNicks = parsedBackup.nicks || [];
-                  logWarn(`🔄 Restaurado loaded-nicks.json a partir do backup: ${backupPath}`);
-                  restored = true;
-                  break;
-                }
-              } catch (e) {
-                // Try next backup
-                continue;
-              }
-            }
-
-            if (!restored) {
-              // Move corrupt file aside and create empty structure so automation won't choke
-              const corruptPath = nicksFilePath + `.corrupt-${Date.now()}`;
-              try {
-                fs.renameSync(nicksFilePath, corruptPath);
-                logWarn(`🔧 Arquivo de nicks corrompido movido para: ${corruptPath}`);
-              } catch (e) {
-                logWarn('⚠️ Falha ao mover arquivo corrompido de nicks:', e);
-              }
-
-              try {
-                fs.writeFileSync(nicksFilePath, JSON.stringify({ nicks: [], fileName: null, timestamp: Date.now() }, null, 2), 'utf8');
-                logWarn('🆕 Criado loaded-nicks.json vazio como fallback');
-                loadedNicks = [];
-              } catch (e) {
-                logError('❌ Falha ao criar fallback empty loaded-nicks.json:', e);
-              }
-            }
+            loadedNicks = nicksManager.load() || [];
           } catch (e) {
-            logWarn('⚠️ Tentativa automática de recuperação falhou:', e);
+            logWarn('⚠️ nicksManager.load() falhou ao ler arquivo de nicks:', e && e.message ? e.message : e);
+            loadedNicks = Array.isArray(nicksManager.getList) ? nicksManager.getList() : [];
           }
         }
-      } else {
-        log(`⚠️ [DEBUG] Arquivo de nicks NÃO EXISTE!`);
-      }
-      
-      // Se não encontrou no arquivo, tentar pegar do automationEngine atual
-      if (loadedNicks.length === 0) {
-        log(`🔍 [DEBUG] Tentando carregar do automationEngine...`);
-        log(`🔍 [DEBUG] automationEngine existe? ${!!automationEngine}`);
-        log(`🔍 [DEBUG] automationEngine.nicksList existe? ${!!automationEngine?.nicksList}`);
-        log(`🔍 [DEBUG] automationEngine.nicksList.length = ${automationEngine?.nicksList?.length || 0}`);
-        
+        log(`📂 ✅ ${Array.isArray(loadedNicks) ? loadedNicks.length : 0} nicks carregados via nicksManager`);
+      } catch (e) {
+        logWarn('⚠️ Erro inesperado ao carregar nicks via nicksManager:', e && e.message ? e.message : e);
         loadedNicks = automationEngine?.nicksList || [];
-        log(`📂 ${loadedNicks.length} nicks carregados do automationEngine`);
       }
       
       // Fechar aba de automação para começar o trabalho
@@ -5308,7 +5081,7 @@ app.whenReady().then(async () => {
         automationEngine.isRunning = false;
         automationEngine.waitingForNicks = true;
         log(`❌ [DEBUG] Nenhuma lista de nicks carregada - aguardando que o usuário carregue uma lista`);
-        return { success: false, message: 'Nenhuma lista de nicks carregada. Carregue uma lista para iniciar a automação.' };
+        return { success: false, message: 'Nenhuma lista de nicks carregada. Carregue uma lista para iniciar a automação.', suppressNotification: true };
       }
 
       // If engine is waiting for nicks because preserved index was out-of-bounds, don't start yet
@@ -5317,7 +5090,7 @@ app.whenReady().then(async () => {
         log('⚠️ Automação não iniciada: esperando nova lista de nicks que cubra o índice preservado');
         // Save progress so the preserved index remains stored
         try { await saveProgress(); } catch (e) { logWarn('Falha ao salvar progresso ao marcar waitingForNicks:', e); }
-        return { success: false, message: 'Índice de progresso atual excede a lista de nicks. Carregue uma nova lista para continuar.' };
+        return { success: false, message: 'Índice de progresso atual excede a lista de nicks. Carregue uma nova lista para continuar.', suppressNotification: true };
       }
       
       log(`✅ [DEBUG] Validação de nicks PASSOU!`);
@@ -5349,10 +5122,45 @@ app.whenReady().then(async () => {
 
   // Manter uma espera curta (reduzida de 2s para 0.5s) - a view já foi pré-carregada
   await sleep(500);
-  startRealAutomation();
-      
-      log('✅ Automação REAL iniciada com sucesso');
-      return { success: true, message: 'Automação iniciada - começando trabalho...' };
+  // Aguardar a conclusão da tentativa de iniciar a automação para saber
+  // se ela realmente começou (startRealAutomation pode abortar por falta de nicks)
+  // Marcar quantos convites já existiam para detectar se algum trabalho foi realizado
+  const savedTotalInvitesBeforeStart = automationEngine ? (automationEngine.totalInvitesSent || 0) : 0;
+  try {
+    await startRealAutomation();
+  } catch (e) {
+    logWarn('⚠️ startRealAutomation lançou erro:', e && e.message ? e.message : e);
+  }
+
+  // If the run actually sent invites, treat the start as successful even if
+  // the engine is not left running (it finished its work). This prevents
+  // showing a generic "Erro ao iniciar automação" when the automation ran
+  // and completed (e.g. a single quick leva execution).
+  const savedTotalInvitesAfterStart = automationEngine ? (automationEngine.totalInvitesSent || 0) : 0;
+  if (savedTotalInvitesAfterStart > savedTotalInvitesBeforeStart) {
+    log('✅ Automação executou trabalho e concluiu (invites enviados)');
+    // clear any cached start notification marker
+    lastStartNotification = null;
+    return { success: true, message: 'Automação iniciada e executada com sucesso.' };
+  }
+
+  // If we are waiting for nicks, suppress notification (already informed renderer)
+  if (automationEngine && automationEngine.waitingForNicks) {
+    // clear marker and return suppressed response
+    lastStartNotification = null;
+    return { success: false, message: 'Lista insuficiente para completar a leva. Carregue mais nicks para retomar.', suppressNotification: true };
+  }
+
+  // If startRealAutomation emitted a notification (error or waiting), suppress the generic toast
+  try {
+    if (lastStartNotification && (Date.now() - (lastStartNotification.ts || 0) < 5000)) {
+      const msg = lastStartNotification.message || 'Operação iniciada com notificações.';
+      lastStartNotification = null;
+      return { success: false, message: msg, suppressNotification: true };
+    }
+  } catch (e) { lastStartNotification = null; }
+
+  return { success: false, message: 'Automação não iniciada.' };
     } catch (error) {
       logError('❌ Erro ao iniciar automação:', error);
       return { success: false, message: error.message };
@@ -5542,11 +5350,15 @@ app.whenReady().then(async () => {
         const savedProgress = loadProgress();
         
         // SAVE TO AUTOMATION ENGINE
-        // Update in-memory loadedNicksList (used by get-automation-nicks-count)
+        // Update authoritative nicks store via nicksManager
         try {
-          loadedNicksList = Array.isArray(nicks) ? nicks.filter(n => !usedNicksSet.has(n)) : [];
+          if (Array.isArray(nicks)) {
+            nicksManager.setList(nicks);
+          } else {
+            nicksManager.setList([]);
+          }
         } catch (e) {
-          loadedNicksList = Array.isArray(nicks) ? nicks : [];
+          logWarn('Erro ao atualizar nicks no nicksManager:', e && e.message ? e.message : e);
         }
 
         if (automationEngine) {
@@ -5556,10 +5368,18 @@ app.whenReady().then(async () => {
           try {
             if (typeof automationEngine.currentNickIndex === 'number') {
               if (automationEngine.currentNickIndex >= automationEngine.nicksList.length) {
-                logWarn('🔧 Índice de progresso excede o tamanho da nova lista de nicks — ajustando para 0 automaticamente');
-                automationEngine.currentNickIndex = 0;
-                // Persist adjusted progress so next start uses the corrected index
-                try { saveProgress(); } catch (e) { logWarn('Falha ao salvar progresso ajustado:', e && e.message ? e.message : e); }
+                logWarn('🔧 Índice de progresso excede o tamanho da nova lista de nicks — não será resetado automaticamente');
+                // Manter o índice preservado e marcar que a engine está esperando por nicks suficientes
+                automationEngine.waitingForNicks = true;
+                try {
+                  if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('automation-log', {
+                      message: 'Progresso atual exige mais nicks; carregue uma lista maior ou reinicie manualmente.',
+                      type: 'warn',
+                      timestamp: new Date().toISOString(),
+                    });
+                  }
+                } catch (e) { /* ignore */ }
               }
             }
           } catch (e) {
@@ -5579,26 +5399,26 @@ app.whenReady().then(async () => {
             );
           }
           log(`🔗 Webhook aplicado: ${automationEngine.webhookUrl ? 'Configurado' : 'Não configurado'}`);
-          // If the engine was waiting for nicks (preserved index out-of-bounds), auto-resume when possible
+          // If the engine was waiting for nicks (preserved index out-of-bounds), do NOT auto-resume.
           try {
             if (automationEngine.waitingForNicks && typeof automationEngine.currentNickIndex === 'number') {
               if (automationEngine.currentNickIndex < automationEngine.nicksList.length) {
                 automationEngine.waitingForNicks = false;
-                log('✅ Nova lista cobre o índice preservado — retomando automação automaticamente');
-                // If engine has a config (was previously configured), start automation
-                if (automationEngine.config && !automationEngine.isRunning) {
-                  automationEngine.isRunning = true;
-                  // Give a small delay to allow renderer updates
-                  setTimeout(() => {
-                    startRealAutomation().catch(e => logError('Erro ao retomar automação automaticamente:', e));
-                  }, 500);
+                log('✅ Nova lista cobre o índice preservado — não iniciaremos automaticamente. Pressione Iniciar para continuar.');
+                // Notify renderer/user that list is sufficient but do not start automatically
+                if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+                  mainWindow.webContents.send('automation-log', {
+                    message: 'Lista suficiente — pressione Iniciar para retomar a automação.',
+                    type: 'info',
+                    timestamp: new Date().toISOString(),
+                  });
                 }
               } else {
                 logWarn('🔍 Nova lista ainda não cobre o índice preservado — continue carregando uma lista maior');
               }
             }
           } catch (e) {
-            logWarn('⚠️ Erro ao tentar retomar automação automaticamente:', e);
+            logWarn('⚠️ Erro ao atualizar estado após carregamento de nova lista:', e);
           }
         } else {
           // Criar automationEngine se não existir
@@ -5619,9 +5439,17 @@ app.whenReady().then(async () => {
           // Validate currentNickIndex against list length
           try {
             if (automationEngine.currentNickIndex >= automationEngine.nicksList.length) {
-              logWarn('🔧 Índice de progresso excede o tamanho da lista de nicks ao criar engine — ajustando para 0 automaticamente');
-              automationEngine.currentNickIndex = 0;
-              try { saveProgress(); } catch (e) { logWarn('Falha ao salvar progresso ajustado (engine creation):', e && e.message ? e.message : e); }
+              logWarn('🔧 Índice de progresso excede o tamanho da lista de nicks ao criar engine — não será resetado automaticamente');
+              automationEngine.waitingForNicks = true;
+              try {
+                if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+                  mainWindow.webContents.send('automation-log', {
+                    message: 'Progresso atual exige mais nicks; carregue uma lista maior ou reinicie manualmente.',
+                    type: 'warn',
+                    timestamp: new Date().toISOString(),
+                  });
+                }
+              } catch (e) { /* ignore */ }
             }
           } catch (e) {
             logWarn('Erro ao validar currentNickIndex durante criação da engine:', e && e.message ? e.message : e);
@@ -5637,7 +5465,7 @@ app.whenReady().then(async () => {
         }
         // Notify renderer about new nicks count (use sanitized in-memory list)
         try {
-          const countToSend = Array.isArray(loadedNicksList) ? loadedNicksList.length : (Array.isArray(nicks) ? nicks.length : 0);
+          const countToSend = typeof nicksManager.getCount === 'function' ? nicksManager.getCount() : (Array.isArray(nicks) ? nicks.length : 0);
           if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('automation-nicks-status', { count: countToSend });
           }
@@ -5672,7 +5500,7 @@ app.whenReady().then(async () => {
   // IPC: retornar número atual de nicks restantes (loaded-nicks.json)
   ipcMain.handle('get-automation-nicks-count', async () => {
     try {
-      return { success: true, count: Array.isArray(loadedNicksList) ? loadedNicksList.length : 0 };
+      return { success: true, count: typeof nicksManager.getCount === 'function' ? nicksManager.getCount() : 0 };
     } catch (e) {
       logWarn('Erro em get-automation-nicks-count:', e && e.message ? e.message : e);
       return { success: false, count: 0 };
@@ -6631,6 +6459,9 @@ app.whenReady().then(async () => {
 
   // Flag global para prevenir múltiplas instâncias da automação
   let automationRunning = false;
+  // Flag to indicate the last notification emitted during a start attempt
+  // { type: 'error'|'waiting', message: string, ts: number }
+  let lastStartNotification = null;
 
   // Arquivo para salvar estatísticas incrementais (recuperação em caso de queda)
   const incrementalStatsPath = path.join(userDataPath, 'incremental-stats.json');
@@ -7042,6 +6873,8 @@ app.whenReady().then(async () => {
             details: 'Nenhuma conta será processada até que a leva avance ou o limite seja alterado.'
           });
         }
+        // Mark that we already emitted an error notification during start
+        try { lastStartNotification = { type: 'error', message: 'Limite diário de contas atingido para a leva atual.', ts: Date.now() }; } catch (e) { /* ignore */ }
         // Parar a automação de forma limpa
         automationEngine.isRunning = false;
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('progress-hide');
@@ -7062,6 +6895,7 @@ app.whenReady().then(async () => {
         savedProgress && savedProgress.currentCiclo ? savedProgress.currentCiclo : 1;
       const savedAccountIndex =
         savedProgress && savedProgress.currentAccountIndex ? savedProgress.currentAccountIndex : 0;
+      const savedAccountId = savedProgress && savedProgress.currentAccountId ? savedProgress.currentAccountId : null;
       
       if (startCiclo > 1 || savedAccountIndex > 0) {
         automationLog(
@@ -7072,40 +6906,54 @@ app.whenReady().then(async () => {
       
       sendProgressUpdate(startCiclo, savedAccountIndex, groupAccounts.length);
 
-      // ===== CHECAGEM PREVENTIVA DE NICKS (evitar acabar no meio da leva) =====
+      // ===== CHECAGEM SIMPLES DE NICKS =====
+      // Política: não bloquear o início por exigir nicks suficientes para
+      // completar toda a leva. Em vez disso, permitimos iniciar desde que
+      // haja pelo menos 1 nick disponível; durante a execução, se os nicks
+      // acabarem, a automação salva o progresso e entra em `waitingForNicks`.
       try {
-        const totalAccounts = groupAccounts.length || 0;
-        // contas faltando no ciclo atual
-        const remainingAccountsInCurrentCycle = totalAccounts - (savedAccountIndex || 0);
-        const cyclesRemainingAfterCurrent = 4 - (startCiclo || 1);
-        const nicksNeeded = Math.max(0, remainingAccountsInCurrentCycle) + Math.max(0, cyclesRemainingAfterCurrent) * totalAccounts;
         const availableNicks = (automationEngine && Array.isArray(automationEngine.nicksList))
           ? Math.max(0, automationEngine.nicksList.length - (automationEngine.currentNickIndex || 0))
           : 0;
 
-        automationLog(`🔎 Checagem preventiva: nicksNeeded=${nicksNeeded}, availableNicks=${availableNicks}`, 'info');
+        automationLog(`🔎 Checagem de nicks: availableNicks=${availableNicks}`, 'info');
 
-        if (availableNicks < nicksNeeded) {
-          // Não iniciar - marcar waitingForNicks e registrar no painel
+        if (availableNicks <= 0) {
+          // Nenhum nick disponível: marcar waitingForNicks e parar para que o
+          // usuário carregue novos nicks manualmente. Progresso é salvo.
           if (automationEngine) {
+            const prev = automationEngine.waitingForNicks;
             automationEngine.waitingForNicks = true;
             automationEngine.isRunning = false;
+            // Emitir evento único para renderer somente na transição false->true
+              if (!prev) {
+              try {
+                automationLog('Emitindo event: automation-waiting-for-nicks (pre-run)', 'info');
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  mainWindow.webContents.send('automation-waiting-for-nicks', {
+                    message: 'Nenhum nick disponível. Progresso salvo. Carregue novos nicks para retomar.',
+                    timestamp: new Date().toISOString(),
+                    source: 'pre-run'
+                  });
+                }
+                // record that we emitted waiting notification during start
+                try { lastStartNotification = { type: 'waiting', message: 'Nenhum nick disponível. Progresso salvo. Carregue novos nicks para retomar.', ts: Date.now() }; } catch (e) { /* ignore */ }
+              } catch (e) { /* ignore */ }
+            }
           }
-          automationLog(`⚠️ Lista insuficiente para completar a leva. Faltam ${nicksNeeded - availableNicks} nicks. Carregue mais nicks para retomar.`, 'warn');
-          // Atualizar renderer via log/event
+          automationLog('⚠️ Nenhum nick disponível. Salvo progresso e aguardando novos nicks para retomar.', 'warn');
           if (mainWindow && mainWindow.webContents) {
             mainWindow.webContents.send('automation-log', {
-              message: `⚠️ Lista insuficiente para completar a leva. Faltam ${nicksNeeded - availableNicks} nicks. Carregue mais nicks para retomar.`,
+              message: '⚠️ Nenhum nick disponível. Progresso salvo. Carregue novos nicks para retomar.',
               type: 'warn',
               timestamp: new Date().toISOString(),
             });
           }
-          // Salvar progresso para manter estado
-          try { saveProgress(); } catch (e) { logWarn('Falha ao salvar progresso após checagem preventiva:', e); }
+          try { await saveProgress(); } catch (e) { logWarn('Falha ao salvar progresso após checagem de nicks:', e); }
           return; // Parar execução de startRealAutomation
         }
       } catch (e) {
-        logWarn('⚠️ Erro ao executar checagem preventiva de nicks:', e);
+        logWarn('⚠️ Erro ao executar checagem simples de nicks:', e);
       }
       
       // Enviar atualização de status para o painel
@@ -7133,11 +6981,69 @@ app.whenReady().then(async () => {
         const totalAccounts = (typeof accountsToProcess !== 'undefined') ? accountsToProcess.length : groupAccounts.length;
         automationLog(`📊 Processando ${totalAccounts} contas neste ciclo...`);
         
-        // Se estamos continuando, começar do índice salvo; senão começar do 0
-        const startFrom = ciclo === startCiclo ? savedAccountIndex : 0;
+        // Se estamos continuando, mapear/clamp o índice salvo para o
+        // conjunto atual `accountsToProcess` (pode ser uma fatia reduzida
+        // devido à barreira diária). Isso evita começar em um índice
+        // fora do range e repetir/processar contas incorretamente.
+        let startFrom = 0;
+        if (ciclo === startCiclo) {
+          try {
+            const savedIdx = Number.isFinite(savedAccountIndex) ? savedAccountIndex : 0;
+            if (savedIdx < 0) {
+              startFrom = 0;
+            } else if (Array.isArray(accountsToProcess) && accountsToProcess.length > 0) {
+              // Priorizar restauração por ID se disponível (mais robusto quando
+              // a fatia/accountsToProcess mudou). Caso não encontre, cair
+              // para a tentativa de mapear pelo índice salvo.
+              if (savedAccountId) {
+                const mappedById = accountsToProcess.findIndex(a => a && a.id === savedAccountId);
+                if (mappedById >= 0) {
+                  startFrom = mappedById;
+                } else {
+                  automationLog(`🔁 Conta salva (id=${savedAccountId}) não está na fatia atual; tentando mapear por índice`, 'warn');
+                  if (savedIdx < groupAccounts.length) {
+                    const fallbackId = groupAccounts[savedIdx] && groupAccounts[savedIdx].id;
+                    const mapped = accountsToProcess.findIndex(a => a && a.id === fallbackId);
+                    if (mapped >= 0) {
+                      startFrom = mapped;
+                    } else {
+                      startFrom = 0;
+                      automationLog(`🔁 Índice salvo (${savedIdx}) não está na fatia atual; iniciando de 0`, 'warn');
+                    }
+                  } else {
+                    startFrom = 0;
+                    automationLog(`🔁 Índice salvo (${savedIdx}) >= groupAccounts.length (${groupAccounts.length}); iniciando de 0`, 'warn');
+                  }
+                }
+              } else {
+                // Sem savedAccountId: mapear por índice como antes
+                if (savedIdx < groupAccounts.length) {
+                  const savedAccountIdFromIndex = groupAccounts[savedIdx] && groupAccounts[savedIdx].id;
+                  const mapped = accountsToProcess.findIndex(a => a && a.id === savedAccountIdFromIndex);
+                  if (mapped >= 0) {
+                    startFrom = mapped;
+                  } else {
+                    startFrom = 0;
+                    automationLog(`🔁 Índice salvo (${savedIdx}) não está na fatia atual; iniciando de 0`, 'warn');
+                  }
+                } else {
+                  startFrom = 0;
+                  automationLog(`🔁 Índice salvo (${savedIdx}) >= groupAccounts.length (${groupAccounts.length}); iniciando de 0`, 'warn');
+                }
+              }
+            } else {
+              // Não há accountsToProcess (caso já tratado antes), começar de 0
+              startFrom = 0;
+            }
+          } catch (e) {
+            automationLog('⚠️ Erro ao mapear índice salvo para accountsToProcess; iniciando de 0', 'warn');
+            startFrom = 0;
+          }
+        }
 
         for (let accountIndex = startFrom; accountIndex < totalAccounts; accountIndex++) {
           automationEngine.currentAccountIndex = accountIndex;
+          // Persist current index and (soon) currentAccountId so restore is exact
           saveProgress();
           await waitWhilePaused();
           if (!automationEngine.isRunning) {
@@ -7145,6 +7051,13 @@ app.whenReady().then(async () => {
             break;
           }
           const account = (typeof accountsToProcess !== 'undefined') ? accountsToProcess[accountIndex] : groupAccounts[accountIndex];
+          // Ensure we persist the accountId we're about to process so resume maps by ID
+          try {
+            automationEngine.currentAccountId = account && account.id ? account.id : null;
+          } catch (e) {
+            // não bloquear se algo falhar ao atribuir
+          }
+          try { await saveProgress(); } catch (e) { logWarn('⚠️ Falha ao salvar progresso (currentAccountId persist):', e && e.message ? e.message : e); }
           // Always switch to the account and wait for Discord to load before checking for limitation popups.
           automationLog(`🔄 Trocando para conta ${account.name}...`);
           await switchToAccount(account.id);
@@ -7180,7 +7093,33 @@ app.whenReady().then(async () => {
           const currentNick = await claimNextNick();
           if (!currentNick) {
             automationLog('⚠️ Lista de nicks esgotada - parando automação');
+            const prevWaiting = automationEngine.waitingForNicks;
             automationEngine.isRunning = false;
+            automationEngine.waitingForNicks = true;
+            // Emitir evento único para renderer somente se transição false->true
+            if (!prevWaiting) {
+              try {
+                automationLog('Emitindo event: automation-waiting-for-nicks (mid-run)', 'info');
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  mainWindow.webContents.send('automation-waiting-for-nicks', {
+                    message: 'Lista de nicks esgotada. Progresso salvo. Carregue mais nicks para retomar.',
+                    timestamp: new Date().toISOString(),
+                    source: 'mid-run'
+                  });
+                }
+                // record that we emitted waiting notification during run
+                try { lastStartNotification = { type: 'waiting', message: 'Lista de nicks esgotada. Progresso salvo. Carregue mais nicks para retomar.', ts: Date.now() }; } catch (e) { /* ignore */ }
+              } catch (e) { /* ignore */ }
+            }
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('progress-hide');
+              mainWindow.webContents.send('automation-log', {
+                message: 'Lista de nicks esgotada. Progresso salvo. Carregue mais nicks para retomar.',
+                type: 'warn',
+                timestamp: new Date().toISOString(),
+              });
+            }
+            try { await saveProgress(); } catch (e) { logWarn('Falha ao salvar progresso após nicks esgotados:', e); }
             break;
           }
           automationLog(`\n👤 ===== CONTA ${accountIndex + 1}/${totalAccounts}: ${account.name} =====`);
@@ -7208,7 +7147,37 @@ app.whenReady().then(async () => {
             await sleep(250 + Math.random() * 200); // 0.25-0.45s (SUPER RÁPIDO!)
             
             await waitWhilePaused();
-            
+
+            // IMMEDIATE LIVE CHECK: Detectar popups de 'limited access' ou 'way too spicy'
+            // assim que trocarmos para a conta e a view estiver pronta. Isso evita
+            // tentar enviar qualquer pedido se a conta estiver limitada/ratelimited
+            // no momento da troca.
+            try {
+              const currentViewCheck = getCurrentBrowserView();
+              if (currentViewCheck && currentViewCheck.webContents) {
+                const immediateLimitNow = await detectLimitedAccessInstant(currentViewCheck);
+                if (immediateLimitNow) {
+                    automationLog(`🚫 Conta detectada como limitada no momento da troca: ${account.name}`);
+                    try { accountsSkippedThisLeva.add(account.id); } catch (e) { logWarn('Falha ao marcar account skipped (switch-check):', e && e.message ? e.message : e); }
+
+                    // IMPORTANT: Do NOT consume a nick or increment totalInvitesSent for limited-access cases.
+                    // The account should be skipped and re-evaluated later; do not persist index changes here.
+                    recordAccountPerformance(account.name, false, 'limitedAccess', 'Detected at switch (live)');
+                    try { errorsByType.other++; } catch (e) { /* ignore */ }
+                    automationErrorCount++;
+                    saveIncrementalStats();
+                    sendProgressUpdate(ciclo, accountIndex, totalAccounts);
+                    if (mainWindow && !mainWindow.isDestroyed()) {
+                      mainWindow.webContents.send('stats-update', { success: false, error: true, totalAccounts, maxInvites: totalAccounts * 4 });
+                    }
+                    // Do NOT persist skip; next time we will re-evaluate live.
+                    continue;
+                  }
+              }
+            } catch (e) {
+              logWarn('Erro no immediate live detectLimitedAccess check:', e && e.message ? e.message : e);
+            }
+
             // ✅ DETECÇÃO INTELIGENTE: Verificar se campo de input já está visível (TODOS OS CICLOS)
             automationLog(`🔍 Verificando se campo de username está pronto...`);
             const alreadyOnPage = await checkIfOnAddFriendPage();
@@ -7291,11 +7260,10 @@ app.whenReady().then(async () => {
                 if (String(immediate.error || '').toLowerCase().indexOf('limitedaccess') >= 0 || String(immediate.error || '').toLowerCase().indexOf('limited access') >= 0) {
                   automationLog(`🚫 Conta detectada como limitada após clique: ${account.name}`);
 
-                  automationEngine.currentNickIndex++;
-                  automationEngine.totalInvitesSent++;
-                  saveProgress();
+                  // Do NOT consume a nick or increment totalInvitesSent for limited-access cases.
+                  // Mark the account as skipped for this leva and continue; do not persist index changes.
+                  try { accountsSkippedThisLeva.add(account.id); } catch (e) { /* ignore */ }
                   recordAccountPerformance(account.name, false, 'limitedAccess', 'Account limited access detected');
-                  // Registrar contagem de erro em 'other' para refletir no PDF como 'Outro'
                   try { errorsByType.other++; } catch (e) { /* ignore */ }
                   automationErrorCount++;
                   saveIncrementalStats();
@@ -7334,9 +7302,8 @@ app.whenReady().then(async () => {
                 if (lateLimited) {
                   automationLog(`🚫 Conta detectada como limitada (detecção tardia): ${account.name}`);
 
-                  automationEngine.currentNickIndex++;
-                  automationEngine.totalInvitesSent++;
-                  saveProgress();
+                  // Do NOT consume a nick or increment totalInvitesSent for limited-access detections.
+                  try { accountsSkippedThisLeva.add(account.id); } catch (err) { /* ignore */ }
                   recordAccountPerformance(account.name, false, 'limitedAccess', 'Account limited access detected (late poll)');
                   try { errorsByType.other++; } catch (err) { /* ignore */ }
                   automationErrorCount++;
@@ -7427,6 +7394,22 @@ app.whenReady().then(async () => {
                   maxInvites: totalAccounts * 4
                 });
               }
+            } else if (captchaResult.error === 'limitedAccess') {
+              // Conta limitada detectada durante waitForCaptcha: skip without
+              // consuming the nick and WITHOUT taking screenshots or sending webhooks.
+              automationLog(`🚫 Conta detectada como limitada durante waitForCaptcha: ${account.name}`);
+              try { accountsSkippedThisLeva.add(account.id); } catch (e) { /* ignore */ }
+              recordAccountPerformance(account.name, false, 'limitedAccess', 'Detected during waitForCaptcha');
+              try { errorsByType.other++; } catch (e) { /* ignore */ }
+              automationErrorCount++;
+              saveIncrementalStats();
+              sendProgressUpdate(ciclo, accountIndex, totalAccounts);
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('stats-update', { success: false, error: true, totalAccounts, maxInvites: totalAccounts * 4 });
+              }
+              // Do not increment currentNickIndex/totalInvitesSent; continue to next account.
+              continue;
+
             } else if (captchaResult.error === 'Username não existe') {
               // Username não existe - screenshot JÁ FOI ENVIADO pelo waitForCaptcha()
               // Discord contabiliza como convite enviado mesmo quando o username não existe
@@ -7602,9 +7585,12 @@ app.whenReady().then(async () => {
       
       automationLog('\n🎉 ===== AUTOMAÇÃO CONCLUÍDA! =====');
       automationLog(`📊 Total de convites enviados: ${automationEngine.totalInvitesSent}`);
-      automationLog(
-        `📋 Nicks restantes: ${automationEngine.nicksList.length - automationEngine.currentNickIndex}`
-      );
+      try {
+        const remaining = typeof nicksManager.getCount === 'function' ? nicksManager.getCount() : (automationEngine.nicksList.length - (automationEngine.currentNickIndex || 0));
+        automationLog(`📋 Nicks restantes: ${remaining}`);
+      } catch (e) {
+        automationLog(`📋 Nicks restantes: ${automationEngine.nicksList.length - (automationEngine.currentNickIndex || 0)}`);
+      }
       
       // 🧹 LIMPEZA EXTREMA FINAL - Libera toda memória acumulada
       automationLog('\n🧹 Executando limpeza final completa...');
@@ -7717,22 +7703,65 @@ app.whenReady().then(async () => {
       }
       
       // Adicionar contas recém-processadas (apenas as que realmente processamos nesta execução)
-      const processedThisRunIds = (typeof accountsToProcess !== 'undefined') ? accountsToProcess.map(a => a.id) : visibleAccountIds;
-      processedThisRunIds.forEach(id => {
-        if (!levaProgress.processedCount.includes(id)) {
-          levaProgress.processedCount.push(id);
+      // NOTE: não marcar TODAS as contas planejadas como processadas — isso causava marcar a leva
+      // como completa quando a execução parou no meio por falta de nicks.
+      const totalAccountsThisRun = (typeof accountsToProcess !== 'undefined') ? accountsToProcess.length : visibleAccountIds.length;
+      let processedCountThisRun = 0;
+      try {
+        if (automationEngine && typeof automationEngine.currentAccountIndex === 'number') {
+          // Se a engine está aguardando nicks, o index atual aponta para a conta NÃO processada
+          if (automationEngine.waitingForNicks) {
+            processedCountThisRun = Math.max(0, automationEngine.currentAccountIndex);
+          } else {
+            // Caso normal: se a loop terminou normalmente, o índice aponta para a
+            // última conta processada -> contar como (index + 1)
+            processedCountThisRun = Math.min(totalAccountsThisRun, automationEngine.currentAccountIndex + 1);
+          }
         }
-      });
-      
-      // Salvar progresso atualizado
-      saveLevaProgress(
-        levaProgress.levaNumber,
-        levaProgress.processedCount,
-        levaProgress.totalAccountsExpected
-      );
-      
-      // Verificar se leva está completa
-      const levaCompleta = levaProgress.processedCount.length >= levaProgress.totalAccountsExpected;
+      } catch (e) {
+        processedCountThisRun = 0;
+      }
+
+      // Se a automação parou por falta de nicks (waitingForNicks), NÃO
+      // atualizar o progresso da leva nem marcar como incompleta — apenas
+      // salvar progresso da engine. A marcação de 'leva incompleta' deve
+      // acontecer somente quando os ciclos completos (4/4) forem finalizados
+      // e o total de contas processadas ainda for menor que o esperado.
+      let levaCompleta = false;
+      if (automationEngine && automationEngine.waitingForNicks) {
+        automationLog('🔒 Parada por falta de nicks: não atualizar progresso da leva; apenas progresso em automationProgress salvo.', 'info');
+        // Ainda salvar o levaProgress no disco para consistência dos metadados do arquivo,
+        // mas não adicionar os IDs processados desta execução.
+        saveLevaProgress(
+          levaProgress.levaNumber,
+          levaProgress.processedCount,
+          levaProgress.totalAccountsExpected
+        );
+        levaCompleta = levaProgress.processedCount.length >= levaProgress.totalAccountsExpected;
+      } else {
+        let processedThisRunIds = [];
+        if (typeof accountsToProcess !== 'undefined') {
+          processedThisRunIds = accountsToProcess.slice(0, processedCountThisRun).map(a => a.id);
+        } else {
+          processedThisRunIds = visibleAccountIds.slice(0, processedCountThisRun);
+        }
+
+        processedThisRunIds.forEach(id => {
+          if (!levaProgress.processedCount.includes(id)) {
+            levaProgress.processedCount.push(id);
+          }
+        });
+
+        // Salvar progresso atualizado
+        saveLevaProgress(
+          levaProgress.levaNumber,
+          levaProgress.processedCount,
+          levaProgress.totalAccountsExpected
+        );
+
+        // Verificar se leva está completa
+        levaCompleta = levaProgress.processedCount.length >= levaProgress.totalAccountsExpected;
+      }
       
       automationLog(
         `\n📊 Progresso: ${levaProgress.processedCount.length}/${levaProgress.totalAccountsExpected} contas processadas`
@@ -7777,9 +7806,15 @@ app.whenReady().then(async () => {
         try {
           if (automationEngine) {
             automationEngine.currentLeva = newLeva;
+            // Ao completar a leva corretamente, limpar o marcador da conta atual
+            // para que a próxima automação comece da primeira conta (índice 0).
+            try {
+              automationEngine.currentAccountId = null;
+            } catch (e) { /* ignore */ }
           }
         } catch (e) { logWarn('⚠️ Erro ignorado:', e && e.message ? e.message : e); }
-        clearLevaProgress(); // Limpar progresso para próxima leva
+        // Limpar progresso da leva para a próxima execução
+        clearLevaProgress();
         clearIncrementalStats(); // ✅ Limpar estatísticas incrementais (leva completa)
         try { await saveProgress(); } catch (e) { logWarn('⚠️ Falha ao salvar progresso após incrementar leva:', e && e.message ? e.message : e); }
 
@@ -7799,13 +7834,20 @@ app.whenReady().then(async () => {
         automationLog(`🚫 Relatório NÃO será enviado até completar todas as contas.`);
         
         // ✅ ENVIAR NOTIFICAÇÃO VISUAL PARA O RENDERER
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('leva-incompleta', {
-            processed: levaProgress.processedCount.length,
-            total: levaProgress.totalAccountsExpected,
-            remaining: remaining,
-            levaNumber: currentLevaNum
-          });
+        // Se a automação PAROU devido a falta de nicks, já avisamos o usuário
+        // via `automation-waiting-for-nicks`. Não disparar a notificação de
+        // 'leva incompleta' nesse caso para evitar duplicidade/confusão.
+        if (!(automationEngine && automationEngine.waitingForNicks)) {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('leva-incompleta', {
+              processed: levaProgress.processedCount.length,
+              total: levaProgress.totalAccountsExpected,
+              remaining: remaining,
+              levaNumber: currentLevaNum
+            });
+          }
+        } else {
+          automationLog('🔕 Suprimindo notificação de leva incompleta devido a parada por falta de nicks', 'info');
         }
       }
       
@@ -7819,15 +7861,15 @@ app.whenReady().then(async () => {
       const rate = totalInvites > 0 ? (totalInvites / (elapsedMs / 60000)).toFixed(1) : 0;
       const successRate = totalInvites > 0 ? Math.round((automationSuccessCount / totalInvites) * 100) : 0;
       
-      // Calcular nicks restantes
-      const nicksTotal = automationEngine.nicksList ? automationEngine.nicksList.length : 0;
-      const nicksUsados = automationEngine.currentNickIndex || 0;
-      const nicksRestantes = nicksTotal - nicksUsados;
+      // Calcular nicks restantes usando nicksManager como fonte de verdade
+      const nicksRemaining = (typeof nicksManager.getCount === 'function') ? nicksManager.getCount() : (automationEngine.nicksList ? automationEngine.nicksList.length : 0);
+      const nicksUsed = automationEngine.currentNickIndex || 0;
+      const nicksLoaded = nicksUsed + nicksRemaining;
       
       const finalStats = {
-        nicksLoaded: nicksTotal,
-        nicksUsed: nicksUsados,
-        nicksRemaining: nicksRestantes,
+        nicksLoaded: nicksLoaded,
+        nicksUsed: nicksUsed,
+        nicksRemaining: nicksRemaining,
         accountsVisible: groupAccounts.length,
         totalInvites: totalInvites,
         successCount: automationSuccessCount,
@@ -7845,15 +7887,15 @@ app.whenReady().then(async () => {
       
       // Enviar notificação visual para o renderer
         if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('automation-leva-completed', {
-          totalInvites: automationEngine.totalInvitesSent,
-            nicksRemaining: automationEngine.nicksList.length - automationEngine.currentNickIndex,
+          mainWindow.webContents.send('automation-leva-completed', {
+            totalInvites: automationEngine.totalInvitesSent,
+            nicksRemaining: nicksRemaining,
             stats: finalStats, // ✅ Incluir estatísticas
             newLeva: automationEngine ? automationEngine.currentLeva : loadLevaCounter()
-        });
-        
+          });
+
           // Esconder apenas a barra de progresso (manter estatísticas visíveis)
-        mainWindow.webContents.send('progress-hide');
+          mainWindow.webContents.send('progress-hide');
         }
         
         automationLog(`📊 Relatório será enviado para o webhook!`);
@@ -7869,10 +7911,25 @@ app.whenReady().then(async () => {
       
       automationEngine.isRunning = false;
       
-      // Resetar progresso de ciclo/conta quando terminar completamente
-      automationEngine.currentCiclo = 1;
-      automationEngine.currentAccountIndex = 0;
-      saveProgress();
+      // Se a parada ocorreu por falta de nicks, NÃO resetar ciclo/conta —
+      // queremos preservar `currentCiclo`/`currentLeva`/`currentAccountIndex`
+      // para que o restart (ou carregamento de nova lista) retome exatamente
+      // de onde parou. Apenas resetar quando a execução terminou normalmente
+      // (não em waiting state).
+      try {
+        if (automationEngine && automationEngine.waitingForNicks) {
+          // Apenas salvar o progresso (já sincronizado) e manter índices
+          await saveProgress();
+          automationLog('🔒 Preservando ciclo/conta porque a automação está aguardando nicks', 'info');
+        } else {
+          // Resetar progresso de ciclo/conta quando terminar completamente
+          automationEngine.currentCiclo = 1;
+          automationEngine.currentAccountIndex = 0;
+          await saveProgress();
+        }
+      } catch (e) {
+        logWarn('⚠️ Falha ao salvar progresso durante finalização:', e && e.message ? e.message : e);
+      }
     } catch (error) {
       logError('❌ Erro crítico na automação:', error);
       automationEngine.isRunning = false;
@@ -8729,6 +8786,14 @@ app.whenReady().then(async () => {
       while (!responseReceived && attempts < maxAttempts) {
   // Poll faster initially (150ms) for first ~3s to capture immediate errors/layouts
   const sleepTime = attempts < 20 ? 150 : 450;
+          // Detecção instantânea de conta limitada/rate-limit a cada ciclo do captcha
+          if (currentView && currentView.webContents) {
+            const limitedOrSpicy = await detectLimitedAccessInstant(currentView);
+            if (limitedOrSpicy) {
+              automationLog(`🚫 Conta limitada/rate-limit detectada durante captcha: ${accountName}`);
+              return { success: false, error: 'limitedAccess' };
+            }
+          }
         await sleep(sleepTime);
         attempts++;
 

@@ -6,6 +6,8 @@ let accounts = [];
 let currentContextMenuAccountId = null;
 let modalMode = 'add';
 let editingAccountId = null;
+// Flag para suprimir toasts repetidos quando a automação entra em waiting-for-nicks
+let __automationWaitingToastShown = false;
 
 // Paginação
 let currentPage = 0;
@@ -3364,6 +3366,8 @@ if (window.electron && window.electron.ipcRenderer) {
   // ⚠️ Listener para notificação de LEVA INCOMPLETA
   window.electron.ipcRenderer.on('leva-incompleta', (data) => {
     log('⏳ Leva incompleta detectada:', data);
+    // Resetar flag de waiting (caso tivesse sido mostrada anteriormente)
+    __automationWaitingToastShown = false;
     
     // Mostrar notificação visual
     showNotification(
@@ -3389,6 +3393,9 @@ if (window.electron && window.electron.ipcRenderer) {
 
   // Mostrar barra de progresso
   window.electron.ipcRenderer.on('progress-show', () => {
+    // Ao iniciar a barra de progresso (automação reiniciando), permitir novo toast de waiting
+    __automationWaitingToastShown = false;
+
     function tryShowProgress(attempts = 0) {
       const maxAttempts = 10;
       const progressBar = document.getElementById('automation-progress-bar');
@@ -3471,8 +3478,27 @@ if (window.electron && window.electron.ipcRenderer) {
     if (statErrors) statErrors.textContent = errorCount;
   });
 
+  // Mostrar um único toast quando o main informar que está aguardando novos nicks
+  window.electron.ipcRenderer.on('automation-waiting-for-nicks', (data) => {
+    try {
+      if (__automationWaitingToastShown) return; // já mostrado
+      __automationWaitingToastShown = true;
+
+      const message = (data && data.message) ||
+        'Lista de nicks insuficiente — aguardando novos nicks para continuar.';
+
+      // Mostrar como warning por um tempo maior (15s)
+      showNotification(message, 'warning', 15000);
+    } catch (e) {
+      console.error('Erro ao processar automation-waiting-for-nicks no renderer:', e);
+    }
+  });
+
   // Esconder barra de progresso após conclusão
   window.electron.ipcRenderer.on('progress-hide', () => {
+    // reset flag: automação terminou/pausou, permitir novo aviso waiting mais tarde
+    __automationWaitingToastShown = false;
+
     setTimeout(() => {
       const progressBar = document.getElementById('automation-progress-bar');
       
@@ -3492,6 +3518,9 @@ if (window.electron && window.electron.ipcRenderer) {
   });
 
   window.electron.ipcRenderer.on('automation-leva-completed', (data) => {
+    // resetar flag caso estivesse ativa
+    __automationWaitingToastShown = false;
+
     if (data.stats) {
       const statNicksLoaded = document.getElementById('stat-nicks-loaded');
       const statNicksRemaining = document.getElementById('stat-nicks-remaining');
@@ -3524,6 +3553,8 @@ if (window.electron && window.electron.ipcRenderer) {
     } catch (e) {
       console.error('Erro ao atualizar contador de leva no renderer:', e);
     }
+    // garantir reset após conclusão
+    __automationWaitingToastShown = false;
   });
 
   // ✅ Handler para erros de automação (ex: campo obrigatório não preenchido)
@@ -3937,25 +3968,37 @@ function validateAutomationStart() {
   // Cada conta precisa de 4 nicks por leva (4 ciclos)
   const requiredNicks = requiredAccounts * 4;
 
-  if (nicksCount === 0 || nicksRemaining < requiredNicks) {
+  // Only block start if there are zero nicks loaded.
+  if (nicksCount === 0) {
     if (startAutomationBtn) {
       startAutomationBtn.disabled = true;
       startAutomationBtn.style.opacity = '0.6';
-      startAutomationBtn.title = `Nicks insuficientes — é necessário ${requiredNicks} nicks (Contas: ${requiredAccounts} x4).`;
+      startAutomationBtn.title = `Nenhum nick carregado — carregue pelo menos 1 nick para iniciar.`;
     }
 
-    // Mostrar notificação amigável no app (não usar alert do Windows)
-    const verb = nicksCount === 0 ? 'Nenhum nick carregado' : `${nicksRemaining} disponível(s) de ${requiredNicks} necessários`;
-    showNotification(`❌ Lista inválida: ${verb}. Carregue mais nicks (precisa de ${requiredNicks}).`, 'error', 8000);
-
+    showNotification('❌ Lista inválida: Nenhum nick carregado. Carregue nicks para iniciar a automação.', 'error', 8000);
     return false;
   }
 
-  if (startAutomationBtn) {
-    startAutomationBtn.disabled = false;
-    startAutomationBtn.style.opacity = '';
-    startAutomationBtn.title = '';
+  // If there are fewer nicks than the ideal required to finish a full leva,
+  // show a non-blocking warning but allow the user to start. The automation
+  // will save progress and stop when nicks run out.
+  if (nicksRemaining < requiredNicks) {
+    const verb = `${nicksRemaining} disponível(s) de ${requiredNicks} necessários`;
+    showNotification(`⚠️ Atenção: ${verb}. A automação irá parar quando os nicks acabarem; carregue mais nicks para completar a leva.`, 'warn', 8000);
+    if (startAutomationBtn) {
+      startAutomationBtn.disabled = false;
+      startAutomationBtn.style.opacity = '';
+      startAutomationBtn.title = `Lista menor que o ideal (${requiredNicks}) — a automação irá parar quando nicks acabarem.`;
+    }
+  } else {
+    if (startAutomationBtn) {
+      startAutomationBtn.disabled = false;
+      startAutomationBtn.style.opacity = '';
+      startAutomationBtn.title = '';
+    }
   }
+
   return true;
 }
 
@@ -4116,7 +4159,14 @@ if (startAutomationBtn) {
             logContainer.scrollTop = logContainer.scrollHeight;
           }
         } else {
-          showNotification('❌ Erro ao iniciar automação: ' + (result.message || 'Erro desconhecido'), 'error');
+          // Algumas respostas são informativas (ex: falta de nicks, índice preservado).
+          // O main process pode sinalizar `suppressNotification: true` para evitar
+          // mostrar um alerta de erro ao usuário nesses casos.
+          if (!result.suppressNotification) {
+            showNotification('❌ Erro ao iniciar automação: ' + (result.message || 'Erro desconhecido'), 'error');
+          } else {
+            console.log('⚠️ Notificação de erro suprimida (mensagem do main):', result.message);
+          }
         }
       } else {
         console.error('❌ Método de automação não disponível');
