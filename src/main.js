@@ -86,8 +86,8 @@ async function markProcessedAccount(accountId, totalAccountsExpected) {
         logWarn('⚠️ Falha ao salvar progresso da leva (markProcessedAccount):', e && e.message ? e.message : e);
       }
       // Também salvar progresso geral (currentAccountId / indexes)
-      if (typeof saveProgress === 'function') {
-        try { await saveAutomationProgress(); } catch (e) { logWarn('⚠️ Falha ao salvar progresso (markProcessedAccount):', e && e.message ? e.message : e); }
+      if (typeof saveProgressAtomic === 'function') {
+        try { await saveProgressAtomic(); } catch (e) { logWarn('⚠️ Falha ao salvar progresso (markProcessedAccount):', e && e.message ? e.message : e); }
       }
     }
   } catch (error) {
@@ -260,13 +260,6 @@ function resetAutomationProgress() {
 
   // Atualizar timestamp
   automationProgress.lastUpdate = new Date().toISOString();
-
-  // Atualizar heartbeat da engine (usado pelo watchdog de saúde)
-  try {
-    if (automationEngine && typeof automationEngine === 'object') {
-      automationEngine._lastHeartbeat = automationProgress.lastUpdate;
-    }
-  } catch (e) { /* ignore */ }
 
   const progressToSave = Object.assign({}, automationProgress);
 
@@ -1807,7 +1800,7 @@ async function loadAccounts() {
 
   // IPC handler temporário para testes: retornar grupo de contas por página
   try {
-    ipcMain.handle('teste-request-page', (_event, _args) => {
+    ipcMain.handle('teste-request-page', (event, args) => {
       // Handler de teste removido, modo dinâmico restaurado
     });
   } catch (e) {
@@ -4559,7 +4552,7 @@ if (!gotTheLock) {
   app.quit();
 } else {
   // Se alguém tentar abrir segunda instância, focar na primeira
-  app.on('second-instance', (_event, _commandLine, _workingDirectory) => {
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
     log('🔔 Tentativa de abrir segunda instância detectada - focando na janela principal');
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
@@ -6029,7 +6022,7 @@ app.whenReady().then(async () => {
           resolve(true);
         };
 
-        const failHandler = (event, errorCode, errorDescription, _validatedURL) => {
+        const failHandler = (event, errorCode, errorDescription, validatedURL) => {
           if (resolved) return; resolved = true;
           cleanup();
           automationLog(`⚠️ waitForBrowserViewLoad: did-fail-load para ${accountId} - ${errorDescription}`);
@@ -8525,12 +8518,16 @@ app.whenReady().then(async () => {
     return true;
   }
   
-  async function captureAndSendError(accountName, targetNick, errorMessage) {
-    automationLog(`📸 Capturando screenshot do erro...`);
-
-    // Pequeno delay para garantir que a UI de erro/carregamento tenha tempo
-    // de renderizar (ex.: evitar capturar captcha antes do modal de erro).
-    try { await sleep(200); } catch (e) { /* ignore */ }
+  async function captureAndSendError(accountName, targetNick, errorMessage, delayMs = 200) {
+    automationLog(`📸 Capturando screenshot do erro (delay ${delayMs}ms)...`);
+    // Pequeno delay para assegurar que popups/erros visuais já apareceram
+    // Evita capturar elementos transitórios como captchas que aparecem imediatamente
+    try {
+      if (delayMs && typeof delayMs === 'number' && delayMs > 0) await sleep(delayMs);
+    } catch (e) {
+      logWarn('⚠️ Falha ao aplicar delay antes de screenshot:', e && e.message ? e.message : e);
+    }
+    
     try {
       const currentView = getCurrentBrowserView();
       if (!currentView || !currentView.webContents) {
@@ -9371,32 +9368,3 @@ process.on('resume-automation', () => {
     logWarn('Erro no listener interno de resume-automation:', e && e.message ? e.message : e);
   }
 });
-
-// Watchdog: detectar travamentos da automação e tentar restaurar
-try {
-  const WATCHDOG_INTERVAL_MS = 30 * 1000; // checar a cada 30s
-  const WATCHDOG_STALE_MS = 60 * 1000; // considerar travada se sem heartbeat há >60s
-
-  setInterval(() => {
-    try {
-      if (!automationEngine || typeof automationEngine !== 'object') return;
-      // Se a engine não está rodando, nada a fazer
-      if (!automationEngine.isRunning) return;
-      const last = automationEngine._lastHeartbeat || automationProgress.lastUpdate || null;
-      if (!last) return;
-      const age = Date.now() - new Date(last).getTime();
-      if (age > WATCHDOG_STALE_MS) {
-        logWarn(`🛟 Watchdog: possível travamento detectado (último heartbeat há ${Math.round(age/1000)}s). Tentando restaurar automação...`);
-        try {
-          // Tentar restaurar de forma segura: sinalizar parada e solicitar restart
-          automationEngine.isRunning = false;
-        } catch (e) { /* ignore */ }
-        try {
-          process.emit('resume-automation');
-        } catch (e) {
-          logWarn('Falha ao emitir resume-automation pelo watchdog:', e && e.message ? e.message : e);
-        }
-      }
-    } catch (e) { /* ignore */ }
-  }, WATCHDOG_INTERVAL_MS);
-} catch (e) { logWarn('Erro ao inicializar watchdog:', e && e.message ? e.message : e); }
