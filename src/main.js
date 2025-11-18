@@ -3,7 +3,6 @@ const { app, BrowserWindow, BrowserView, ipcMain, session, dialog } = require('e
 const path = require('path');
 const fs = require('fs');
 const archiver = require('archiver');
-const axios = require('axios');
 const FormData = require('form-data');
 const PDFDocument = require('pdfkit');
 
@@ -14,7 +13,7 @@ const nicksManager = require('./main/nicks-manager');
 const selectorsCode = fs.readFileSync(path.join(__dirname, 'main', 'selectors.js'), 'utf8');
 
 // Sistema de logs condicionais + ARQUIVO DE DEBUG
-const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev');
+// const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev'); // unused
 const debugLogPath = path.join(app.getPath('userData'), 'debug-automation.log');
 
 // Limpar log anterior ao iniciar
@@ -66,6 +65,33 @@ function automationLog(message, type = 'info') {
       type,
       timestamp: new Date().toISOString(),
     });
+  }
+}
+
+// Marcar conta como processada para progresso da leva (persistente)
+async function markProcessedAccount(accountId, totalAccountsExpected) {
+  try {
+    if (!automationProgress || !Array.isArray(automationProgress.processedCount)) {
+      automationProgress = automationProgress || {};
+      automationProgress.processedCount = [];
+    }
+
+    if (accountId && !automationProgress.processedCount.includes(accountId)) {
+      automationProgress.processedCount.push(accountId);
+      // Persistir progresso da leva
+      try {
+        const levaNum = (automationEngine && automationEngine.currentLeva) ? automationEngine.currentLeva : loadLevaCounter();
+        saveLevaProgress(levaNum, automationProgress.processedCount, typeof totalAccountsExpected === 'number' ? totalAccountsExpected : null);
+      } catch (e) {
+        logWarn('⚠️ Falha ao salvar progresso da leva (markProcessedAccount):', e && e.message ? e.message : e);
+      }
+      // Também salvar progresso geral (currentAccountId / indexes)
+      if (typeof saveProgress === 'function') {
+        try { await saveAutomationProgress(); } catch (e) { logWarn('⚠️ Falha ao salvar progresso (markProcessedAccount):', e && e.message ? e.message : e); }
+      }
+    }
+  } catch (error) {
+    logWarn('⚠️ Erro em markProcessedAccount:', error && error.message ? error.message : error);
   }
 }
 
@@ -234,6 +260,13 @@ function resetAutomationProgress() {
 
   // Atualizar timestamp
   automationProgress.lastUpdate = new Date().toISOString();
+
+  // Atualizar heartbeat da engine (usado pelo watchdog de saúde)
+  try {
+    if (automationEngine && typeof automationEngine === 'object') {
+      automationEngine._lastHeartbeat = automationProgress.lastUpdate;
+    }
+  } catch (e) { /* ignore */ }
 
   const progressToSave = Object.assign({}, automationProgress);
 
@@ -1774,7 +1807,7 @@ async function loadAccounts() {
 
   // IPC handler temporário para testes: retornar grupo de contas por página
   try {
-    ipcMain.handle('teste-request-page', (event, args) => {
+    ipcMain.handle('teste-request-page', (_event, _args) => {
       // Handler de teste removido, modo dinâmico restaurado
     });
   } catch (e) {
@@ -4526,7 +4559,7 @@ if (!gotTheLock) {
   app.quit();
 } else {
   // Se alguém tentar abrir segunda instância, focar na primeira
-  app.on('second-instance', (event, commandLine, workingDirectory) => {
+  app.on('second-instance', (_event, _commandLine, _workingDirectory) => {
     log('🔔 Tentativa de abrir segunda instância detectada - focando na janela principal');
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
@@ -5996,7 +6029,7 @@ app.whenReady().then(async () => {
           resolve(true);
         };
 
-        const failHandler = (event, errorCode, errorDescription, validatedURL) => {
+        const failHandler = (event, errorCode, errorDescription, _validatedURL) => {
           if (resolved) return; resolved = true;
           cleanup();
           automationLog(`⚠️ waitForBrowserViewLoad: did-fail-load para ${accountId} - ${errorDescription}`);
@@ -7060,7 +7093,15 @@ app.whenReady().then(async () => {
           try { await saveProgress(); } catch (e) { logWarn('⚠️ Falha ao salvar progresso (currentAccountId persist):', e && e.message ? e.message : e); }
           // Always switch to the account and wait for Discord to load before checking for limitation popups.
           automationLog(`🔄 Trocando para conta ${account.name}...`);
-          await switchToAccount(account.id);
+          const initialSwitch = await switchToAccount(account.id);
+          if (!initialSwitch) {
+            automationLog(`⚠️ Falha inicial ao anexar BrowserView para ${account.name} - pulando conta (transiente)`, 'warn');
+            recordAccountPerformance(account.name, false, 'other', 'BrowserView failed to attach/load (initial)');
+            automationErrorCount++;
+            try { saveIncrementalStats(); } catch (e) { logWarn('Falha ao salvar incremental stats (initial switch):', e); }
+            sendProgressUpdate(ciclo, accountIndex, totalAccounts);
+            continue;
+          }
           automationLog(`⏳ Aguardando Discord carregar...`);
           await sleep(250 + Math.random() * 200); // 0.25-0.45s (SUPER RÁPIDO!)
           await waitWhilePaused();
@@ -7140,7 +7181,15 @@ app.whenReady().then(async () => {
             
             // 1. Trocar para a conta
             automationLog(`🔄 Trocando para conta ${account.name}...`);
-            await switchToAccount(account.id);
+            const switchedNow = await switchToAccount(account.id);
+            if (!switchedNow) {
+              automationLog(`⚠️ Falha ao anexar/abrir BrowserView para ${account.name} - pulando conta (transiente)`, 'warn');
+              recordAccountPerformance(account.name, false, 'other', 'BrowserView failed to attach/load');
+              automationErrorCount++;
+              try { saveIncrementalStats(); } catch (e) { logWarn('Falha ao salvar incremental stats (switch fail):', e); }
+              sendProgressUpdate(ciclo, accountIndex, totalAccounts);
+              continue;
+            }
             
             // 2. Aguardar a view carregar completamente (OTIMIZADO!)
             automationLog(`⏳ Aguardando Discord carregar...`);
@@ -7280,6 +7329,7 @@ app.whenReady().then(async () => {
                 automationEngine.currentNickIndex++;
                 automationEngine.totalInvitesSent++;
                 saveProgress();
+                try { await markProcessedAccount(account.id, totalAccounts); } catch (e) { logWarn('Falha ao marcar processed (immediate error):', e); }
                 recordAccountPerformance(account.name, false, errType, immediate.error);
                 automationErrorCount++;
                 saveIncrementalStats();
@@ -7342,6 +7392,7 @@ app.whenReady().then(async () => {
               automationEngine.currentNickIndex++;
               automationEngine.totalInvitesSent++;
               saveProgress();
+              try { await markProcessedAccount(account.id, totalAccounts); } catch (e) { logWarn('Falha ao marcar processed (captcha not accepting):', e); }
               
               // ✅ Registrar desempenho da conta
               recordAccountPerformance(account.name, true);
@@ -7374,6 +7425,7 @@ app.whenReady().then(async () => {
               automationEngine.currentNickIndex++;
               automationEngine.totalInvitesSent++;
               saveProgress();
+              try { await markProcessedAccount(account.id, totalAccounts); } catch (e) { logWarn('Falha ao marcar processed (username not exist):', e); }
               
               // ✅ Registrar desempenho da conta (erro)
               recordAccountPerformance(account.name, false, 'notAcceptingFriends', captchaResult.error);
@@ -7442,6 +7494,7 @@ app.whenReady().then(async () => {
               automationLog(`⚠️ Erro: ${captchaResult.error} - próxima conta`);
               automationEngine.currentNickIndex++;
               saveProgress();
+              try { await markProcessedAccount(account.id, totalAccounts); } catch (e) { logWarn('Falha ao marcar processed (other error):', e); }
             }
             
             automationLog(`✅ Processamento concluído para ${account.name}`);
@@ -8474,7 +8527,10 @@ app.whenReady().then(async () => {
   
   async function captureAndSendError(accountName, targetNick, errorMessage) {
     automationLog(`📸 Capturando screenshot do erro...`);
-    
+
+    // Pequeno delay para garantir que a UI de erro/carregamento tenha tempo
+    // de renderizar (ex.: evitar capturar captcha antes do modal de erro).
+    try { await sleep(200); } catch (e) { /* ignore */ }
     try {
       const currentView = getCurrentBrowserView();
       if (!currentView || !currentView.webContents) {
@@ -9315,3 +9371,32 @@ process.on('resume-automation', () => {
     logWarn('Erro no listener interno de resume-automation:', e && e.message ? e.message : e);
   }
 });
+
+// Watchdog: detectar travamentos da automação e tentar restaurar
+try {
+  const WATCHDOG_INTERVAL_MS = 30 * 1000; // checar a cada 30s
+  const WATCHDOG_STALE_MS = 60 * 1000; // considerar travada se sem heartbeat há >60s
+
+  setInterval(() => {
+    try {
+      if (!automationEngine || typeof automationEngine !== 'object') return;
+      // Se a engine não está rodando, nada a fazer
+      if (!automationEngine.isRunning) return;
+      const last = automationEngine._lastHeartbeat || automationProgress.lastUpdate || null;
+      if (!last) return;
+      const age = Date.now() - new Date(last).getTime();
+      if (age > WATCHDOG_STALE_MS) {
+        logWarn(`🛟 Watchdog: possível travamento detectado (último heartbeat há ${Math.round(age/1000)}s). Tentando restaurar automação...`);
+        try {
+          // Tentar restaurar de forma segura: sinalizar parada e solicitar restart
+          automationEngine.isRunning = false;
+        } catch (e) { /* ignore */ }
+        try {
+          process.emit('resume-automation');
+        } catch (e) {
+          logWarn('Falha ao emitir resume-automation pelo watchdog:', e && e.message ? e.message : e);
+        }
+      }
+    } catch (e) { /* ignore */ }
+  }, WATCHDOG_INTERVAL_MS);
+} catch (e) { logWarn('Erro ao inicializar watchdog:', e && e.message ? e.message : e); }

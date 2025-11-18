@@ -84,6 +84,25 @@ async function saveJSON(filePath, data, options = {}) {
           const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
           const tmpPath = `${filePath}.tmp-${timestamp}`;
 
+          // Limitar arquivos temporários antigos para evitar acúmulo
+          try {
+            const baseName = path.basename(filePath);
+            const allFiles = fsSync.readdirSync(dir);
+            const tmpPattern = `${baseName}.tmp-`;
+            const tmpFiles = allFiles
+              .filter(n => n.indexOf(tmpPattern) === 0)
+              .map(n => ({ name: n, full: path.join(dir, n), mtime: fsSync.statSync(path.join(dir, n)).mtimeMs }))
+              .sort((a, b) => a.mtime - b.mtime);
+            // Manter no máximo 3 arquivos .tmp- mais recentes
+            while (tmpFiles.length >= 3) {
+              const remove = tmpFiles.shift();
+              try { fsSync.unlinkSync(remove.full); } catch (e) { /* ignore */ }
+            }
+          } catch (e) {
+            // Não bloquear escrita por falha ao podar tmp files
+            void 0;
+          }
+
           // Escrever em arquivo temporário (sync para garantir fsync)
           const fd = fsSync.openSync(tmpPath, 'w');
           try {
