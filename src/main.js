@@ -556,6 +556,43 @@ let isAddingAccount = false;
 // Pause/watchdog helpers for temporary UI actions that must pause automation
 const DEFAULT_PAUSE_TIMEOUT_MS = 30000; // 30s default watchdog
 let currentPause = null; // { reason, timer }
+let automationHeartbeatTimer = null;
+
+function startAutomationHeartbeat(intervalMs = 1000) {
+  try {
+    stopAutomationHeartbeat();
+    automationHeartbeatTimer = setInterval(() => {
+      try {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        const state = {
+          isRunning: automationEngine ? !!automationEngine.isRunning : false,
+          stopRequested: automationEngine ? !!automationEngine.stopRequested : false,
+          isPaused: automationEngine ? !!automationEngine.isPaused : false,
+          currentLeva: automationEngine ? automationEngine.currentLeva : (automationProgress.currentLeva || 1),
+          currentCiclo: automationEngine ? automationEngine.currentCiclo : (automationProgress.currentCiclo || 1),
+          currentAccountId: automationEngine ? (automationEngine.currentAccountId || null) : (automationProgress.currentAccountId || null),
+          timestamp: Date.now()
+        };
+        try { mainWindow.webContents.send('automation-state', state); } catch (e) { /* ignore */ }
+      } catch (e) { logWarn('⚠️ Heartbeat send error:', e && e.message ? e.message : e); }
+    }, intervalMs);
+    log('🫀 Automation heartbeat started');
+  } catch (e) {
+    logWarn('⚠️ Failed to start automation heartbeat:', e && e.message ? e.message : e);
+  }
+}
+
+function stopAutomationHeartbeat() {
+  try {
+    if (automationHeartbeatTimer) {
+      clearInterval(automationHeartbeatTimer);
+      automationHeartbeatTimer = null;
+      log('🫀 Automation heartbeat stopped');
+    }
+  } catch (e) {
+    logWarn('⚠️ Failed to stop automation heartbeat:', e && e.message ? e.message : e);
+  }
+}
 
 function beginTemporaryPause(reason, timeoutMs = DEFAULT_PAUSE_TIMEOUT_MS) {
   try {
@@ -1849,6 +1886,9 @@ function createBrowserView(accountId) {
   // Scripts básicos já são injetados via preload
   log(`🕵️ Scripts básicos carregados via preload para: ${accountId}`);
 
+  // Anexar listeners de recuperação para lidar com crashes/unresponsive/did-fail-load
+  try { attachRecoveryListeners(view, accountId); } catch (e) { logWarn('⚠️ attachRecoveryListeners erro:', e && e.message ? e.message : e); }
+
   // Mascaramento mínimo quando o DOM estiver pronto
   view.webContents.on('dom-ready', () => {
     log(`Discord DOM pronto para ${accountId}`);
@@ -2046,6 +2086,67 @@ function getCurrentBrowserView() {
   return mainWindow?.getBrowserView();
 }
 
+// Aguardar até que a BrowserView associada a uma conta tenha carregado
+// Retorna true se carregou, false se timeout ou erro
+async function waitForBrowserViewLoad(accountId, timeoutMs = 8000) {
+  try {
+    const view = browserViews.get(accountId);
+    if (!view || !view.webContents) {
+      automationLog(`⚠️ waitForBrowserViewLoad: view não existe para ${accountId}`);
+      return false;
+    }
+
+    const wc = view.webContents;
+
+    // Se já não está carregando, presumir que está pronto
+    if (!wc.isLoading()) {
+      automationLog(`✅ waitForBrowserViewLoad: view já pronta para ${accountId}`);
+      return true;
+    }
+
+    return await new Promise(resolve => {
+      let resolved = false;
+
+      const finishHandler = () => {
+        if (resolved) return; resolved = true;
+        cleanup();
+        automationLog(`✅ waitForBrowserViewLoad: did-finish-load para ${accountId}`);
+        resolve(true);
+      };
+
+      const failHandler = (event, errorCode, errorDescription, validatedURL) => {
+        if (resolved) return; resolved = true;
+        cleanup();
+        automationLog(`⚠️ waitForBrowserViewLoad: did-fail-load para ${accountId} - ${errorDescription}`);
+        resolve(false);
+      };
+
+      const timer = setTimeout(() => {
+        if (resolved) return; resolved = true;
+        cleanup();
+        automationLog(`⏰ waitForBrowserViewLoad: timeout após ${timeoutMs}ms para ${accountId}`);
+        resolve(false);
+      }, timeoutMs);
+
+      function cleanup() {
+        try {
+          wc.removeListener('did-finish-load', finishHandler);
+          wc.removeListener('did-fail-load', failHandler);
+        } catch (e) {
+          try { logWarn('waitForBrowserViewLoad cleanup removeListener error', e); } catch (logErr) { /* ignore logging errors */ }
+        }
+        clearTimeout(timer);
+      }
+
+      wc.once('did-finish-load', finishHandler);
+      wc.once('did-fail-load', failHandler);
+    });
+  } catch (error) {
+    logError('❌ Erro em waitForBrowserViewLoad:', error && (error.stack || error.message) ? (error.stack || error.message) : error);
+    return false;
+  }
+}
+
 // Trocar para BrowserView de uma conta
 async function switchToBrowserView(accountId) {
   if (!mainWindow) return;
@@ -2082,11 +2183,48 @@ async function switchToBrowserView(accountId) {
   }
 
   mainWindow.setBrowserView(view);
-  
-  setTimeout(() => {
-    updateBrowserViewBounds();
-  }, 100);
-  
+  try {
+    // Ajustar bounds rapidamente
+    setTimeout(() => {
+      try { updateBrowserViewBounds(); } catch (e) { logWarn('updateBrowserViewBounds erro:', e && e.message ? e.message : e); }
+    }, 100);
+
+    // Aguardar load da view com timeout; se falhar, tentar reload e então recriar
+    const loaded = await waitForBrowserViewLoad(accountId, 10000);
+    if (!loaded) {
+      logWarn(`⚠️ BrowserView ${accountId} não carregou em tempo. Tentando reload...`);
+      try {
+        if (view && view.webContents && !view.webContents.isDestroyed()) {
+          try { view.webContents.reload(); } catch (e) { /* ignore */ }
+        }
+      } catch (e) { /* ignore */ }
+
+      const loadedAfterReload = await waitForBrowserViewLoad(accountId, 6000);
+      if (!loadedAfterReload) {
+        logError(`❌ BrowserView ${accountId} continua falhando ao carregar. Recriando a view.`);
+        // persistir skip e tentar recriar
+        markAccountSkipped(accountId, 'failed_load');
+        try {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            try { mainWindow.removeBrowserView(view); } catch (e) { /* ignore */ }
+          }
+          try { if (!view.webContents.isDestroyed()) view.webContents.destroy(); } catch (e) { /* ignore */ }
+          browserViews.delete(accountId);
+          const newView = createBrowserView(accountId);
+          if (newView) {
+            browserViews.set(accountId, newView);
+            // Setar nova view (não bloquear) e atualizar bounds
+            try { mainWindow.setBrowserView(newView); updateBrowserViewBounds(); } catch (e) { logWarn('Erro ao setar nova view:', e && e.message ? e.message : e); }
+          }
+        } catch (e) {
+          logWarn('Erro ao recriar BrowserView após falha de load:', e && e.message ? e.message : e);
+        }
+      }
+    }
+  } catch (e) {
+    logWarn('Erro no pós-setBrowserView:', e && e.message ? e.message : e);
+  }
+
   log(`🔄 Trocado para BrowserView: ${accountId} (${browserViews.size} ativas)`);
 }
 
@@ -2989,6 +3127,98 @@ function clearLevaProgress() {
     }
   } catch (error) {
     logError('❌ Erro ao limpar progresso da leva:', error);
+  }
+}
+
+// Marcar conta como pulada (skip) na leva atual e persistir
+function markAccountSkipped(accountId, reason = 'other') {
+  try {
+    if (!accountId) return;
+    accountsSkippedThisLeva.add(accountId);
+    // Incrementar estatísticas simplificadas
+    try {
+      if (!errorsByType.other) errorsByType.other = 0;
+      errorsByType.other += 1;
+    } catch (e) { /* ignore */ }
+
+    // Persistir progresso da leva com a lista atualizada
+    try {
+      const levaNum = (automationEngine && typeof automationEngine.currentLeva === 'number') ? automationEngine.currentLeva : (automationProgress.currentLeva || 0);
+      saveLevaProgress(levaNum, Array.from(automationProgress.processedCount || []), (automationProgress.totalAccountsExpected || null));
+    } catch (e) {
+      logWarn('⚠️ Falha ao salvar leva após marcar skip:', e && e.message ? e.message : e);
+    }
+
+    // Notificar renderer para exibir aviso discreto
+    try {
+      if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('account-skipped', { accountId, reason });
+      }
+    } catch (e) { /* ignore */ }
+  } catch (err) {
+    logWarn('Erro em markAccountSkipped:', err && err.message ? err.message : err);
+  }
+}
+
+// Anexa listeners de recuperação à view criada (crash/unresponsive/did-fail-load)
+function attachRecoveryListeners(view, accountId) {
+  try {
+    if (!view || !view.webContents) return;
+    const wc = view.webContents;
+    if (wc.__recoveryListenersAttached) return; // evitar múltiplos attachment
+    wc.__recoveryListenersAttached = true;
+
+    const onProblem = (eventName, details) => {
+      try {
+        logError(`❌ BrowserView problema (${eventName}) detectado para ${accountId}`, details || 'no-details');
+        markAccountSkipped(accountId, `webcontents_${eventName}`);
+
+        // Notificar automação para não tentar usar essa view no momento
+        try {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('automation-error', { accountId, reason: `webcontents_${eventName}` });
+          }
+        } catch (e) { /* ignore */ }
+
+        // Tentar reload simples primeiro
+        try {
+          if (!wc.isDestroyed && wc.reload) {
+            log(`🔁 Tentando reload da view ${accountId} após ${eventName}`);
+            try { wc.reload(); } catch (e) { /* ignore */ }
+          }
+        } catch (e) { /* ignore */ }
+
+        // Após tentativa de reload, tentar recriar a nova view em background
+        setTimeout(() => {
+          try {
+            // Se a view atual ainda é a mesma instância armazenada, substituir
+            if (browserViews.get(accountId) === view) {
+              try {
+                log(`🧹 Recriando BrowserView para ${accountId}`);
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  try { mainWindow.removeBrowserView(view); } catch (e) { /* ignore */ }
+                }
+                try { if (!view.webContents.isDestroyed()) view.webContents.destroy(); } catch (e) { /* ignore */ }
+                browserViews.delete(accountId);
+                const newView = createBrowserView(accountId);
+                if (newView) browserViews.set(accountId, newView);
+              } catch (e) {
+                logWarn('Falha ao recriar BrowserView:', e && e.message ? e.message : e);
+              }
+            }
+          } catch (e) { /* ignore */ }
+        }, 1500);
+      } catch (e) {
+        logWarn('Erro no handler onProblem:', e && e.message ? e.message : e);
+      }
+    };
+
+    wc.on('crashed', (event, killed) => onProblem('crashed', { killed }));
+    wc.on('unresponsive', () => onProblem('unresponsive'));
+    wc.on('render-process-gone', (event, details) => onProblem('render-process-gone', details));
+    wc.on('did-fail-load', (event, errorCode, errorDesc, validatedURL) => onProblem('did-fail-load', { errorCode, errorDesc, validatedURL }));
+  } catch (e) {
+    logWarn('Erro ao anexar recovery listeners:', e && e.message ? e.message : e);
   }
 }
 
@@ -5052,6 +5282,8 @@ app.whenReady().then(async () => {
       
       // Fechar aba de automação para começar o trabalho
       mainWindow.webContents.send('close-automation-tab');
+      // Iniciar heartbeat para manter o renderer sincronizado (mostra botão Parar)
+      try { startAutomationHeartbeat(1000); } catch (e) { logWarn('⚠️ startAutomationHeartbeat failed:', e && e.message ? e.message : e); }
       
       // Carregar contador de levas persistente
       const currentLeva = loadLevaCounter();
@@ -5272,6 +5504,9 @@ app.whenReady().then(async () => {
       } catch (e) {
         // ignore
       }
+
+      // Parar heartbeat para o renderer
+      try { stopAutomationHeartbeat(); } catch (e) { logWarn('⚠️ stopAutomationHeartbeat failed:', e && e.message ? e.message : e); }
 
       // Also remove any visible BrowserView so it does not block the UI
       try {
@@ -5987,74 +6222,28 @@ app.whenReady().then(async () => {
     try {
       if (!view || !view.webContents) return null;
       if (automationEngine && automationEngine.stopRequested) return null;
-      return await view.webContents.executeJavaScript(code);
+      // Usar wrapper com timeout para evitar hangs indefinidos
+      return await executeJSWithTimeout(view, code, 8000);
     } catch (e) {
       logWarn('⚠️ safeExecuteJS erro:', e && e.message ? e.message : e);
       return null;
     }
   }
 
-  // Aguardar até que a BrowserView associada a uma conta tenha carregado
-  // Retorna true se carregou, false se timeout ou erro
-  async function waitForBrowserViewLoad(accountId, timeoutMs = 8000) {
+  // Executa executeJavaScript com timeout; retorna null se expirar
+  async function executeJSWithTimeout(view, code, timeoutMs = 8000) {
     try {
-      const view = browserViews.get(accountId);
-      if (!view || !view.webContents) {
-        automationLog(`⚠️ waitForBrowserViewLoad: view não existe para ${accountId}`);
-        return false;
-      }
-
-      const wc = view.webContents;
-
-      // Se já não está carregando, presumir que está pronto
-      if (!wc.isLoading()) {
-        automationLog(`✅ waitForBrowserViewLoad: view já pronta para ${accountId}`);
-        return true;
-      }
-
-      return await new Promise(resolve => {
-        let resolved = false;
-
-        const finishHandler = () => {
-          if (resolved) return; resolved = true;
-          cleanup();
-          automationLog(`✅ waitForBrowserViewLoad: did-finish-load para ${accountId}`);
-          resolve(true);
-        };
-
-        const failHandler = (event, errorCode, errorDescription, validatedURL) => {
-          if (resolved) return; resolved = true;
-          cleanup();
-          automationLog(`⚠️ waitForBrowserViewLoad: did-fail-load para ${accountId} - ${errorDescription}`);
-          resolve(false);
-        };
-
-        const timer = setTimeout(() => {
-          if (resolved) return; resolved = true;
-          cleanup();
-          automationLog(`⏰ waitForBrowserViewLoad: timeout após ${timeoutMs}ms para ${accountId}`);
-          resolve(false);
-        }, timeoutMs);
-
-        function cleanup() {
-          try {
-            wc.removeListener('did-finish-load', finishHandler);
-            wc.removeListener('did-fail-load', failHandler);
-          } catch (e) {
-            // Log any unexpected error when removing listeners — avoid empty catch blocks
-            try { logWarn('waitForBrowserViewLoad cleanup removeListener error', e); } catch (logErr) { /* ignore logging errors */ }
-          }
-          clearTimeout(timer);
-        }
-
-        wc.once('did-finish-load', finishHandler);
-        wc.once('did-fail-load', failHandler);
-      });
-    } catch (error) {
-      logError('❌ Erro em waitForBrowserViewLoad:', error && (error.stack || error.message) ? (error.stack || error.message) : error);
-      return false;
+      if (!view || !view.webContents) return null;
+      const execPromise = view.webContents.executeJavaScript(code);
+      const timeoutPromise = new Promise(resolve => setTimeout(() => resolve(null), Math.max(500, timeoutMs)));
+      return await Promise.race([execPromise, timeoutPromise]);
+    } catch (e) {
+      logWarn('⚠️ executeJSWithTimeout erro:', e && e.message ? e.message : e);
+      return null;
     }
   }
+
+  // waitForBrowserViewLoad moved earlier in the file to fix lint scope issues
   
   // Função para enviar log de limpeza
   function cleanupLog(message, type = 'info') {
@@ -7744,7 +7933,11 @@ app.whenReady().then(async () => {
         levaProgress = {
           levaNumber: currentLevaNum,
           processedCount: [],
-          totalAccountsExpected: dailyAccountsTotal || visibleAccountIds.length
+          // Preferir valor configurado (dailyAccountsTotal). Caso não exista,
+          // usar o total de contas no arquivo `accounts` (todas as contas do usuário),
+          // em vez de apenas as contas visíveis na página atual. Isso evita marcar
+          // a leva como concluída quando apenas uma página foi processada.
+          totalAccountsExpected: dailyAccountsTotal || (Array.isArray(accounts) ? accounts.length : visibleAccountIds.length)
         };
       }
       
@@ -7982,6 +8175,7 @@ app.whenReady().then(async () => {
     } finally {
       // Sempre resetar flag para permitir nova execução
       automationRunning = false;
+      try { stopAutomationHeartbeat(); } catch (e) { logWarn('⚠️ stopAutomationHeartbeat failed in finalizer:', e && e.message ? e.message : e); }
       log('🔓 Flag de automação liberada');
     }
   }

@@ -613,6 +613,12 @@ function renderAccounts() {
     avatarTabsContainer.appendChild(fragment);
 
     console.log(`✅ Renderização concluída: ${avatarTabsContainer.children.length} abas criadas`);
+    try {
+      updateAutomationBadge();
+    } catch (e) {
+      // silencioso - não bloquear renderização se badge ainda não existir
+      log('⚠️ updateAutomationBadge falhou:', e);
+    }
   } catch (error) {
     console.error('❌ Erro na renderização de contas:', error);
   }
@@ -3517,6 +3523,28 @@ if (window.electron && window.electron.ipcRenderer) {
     }, 3000);
   });
 
+  // Heartbeat: manter botões sincronizados caso eventos de progress não cheguem
+  window.electron.ipcRenderer.on('automation-state', (state) => {
+    try {
+      if (!state) return;
+      const running = !!state.isRunning;
+      if (running) {
+        document.body.classList.add('automation-running');
+        if (startAutomationBtn) startAutomationBtn.style.display = 'none';
+        if (stopAutomationBtn) stopAutomationBtn.style.display = 'inline-block';
+        if (pauseAutomationBtn) pauseAutomationBtn.style.display = 'inline-block';
+      } else {
+        // When not running, show start and hide stop/pause
+        document.body.classList.remove('automation-running');
+        if (startAutomationBtn) startAutomationBtn.style.display = 'inline-block';
+        if (stopAutomationBtn) stopAutomationBtn.style.display = 'none';
+        if (pauseAutomationBtn) pauseAutomationBtn.style.display = 'none';
+      }
+    } catch (e) {
+      console.error('Erro ao processar automation-state no renderer:', e);
+    }
+  });
+
   window.electron.ipcRenderer.on('automation-leva-completed', (data) => {
     // resetar flag caso estivesse ativa
     __automationWaitingToastShown = false;
@@ -3951,6 +3979,156 @@ const loadNicksBtn = document.getElementById('load-nicks-btn');
 const startAutomationBtn = document.getElementById('start-automation-btn');
 const pauseAutomationBtn = document.getElementById('pause-automation-btn');
 const stopAutomationBtn = document.getElementById('stop-automation-btn');
+// Badge UI: mostra discretamente selecionadas / esperadas
+let pendingAutomationConfig = null;
+function createAutomationBadge() {
+  if (!startAutomationBtn) return;
+
+  // Evitar criação duplicada
+  if (document.getElementById('automation-badge')) return;
+
+  const badge = document.createElement('div');
+  badge.id = 'automation-badge';
+  badge.className = 'automation-badge';
+  badge.title = 'Contas selecionadas / esperadas para a execução';
+
+  badge.innerHTML = `
+    <div class="automation-badge-inner">
+      <span class="badge-label">Selecionadas</span>
+      <span class="badge-count"><span id="badge-selected">0</span>/<span id="badge-expected">0</span></span>
+    </div>
+  `;
+
+  // Inserir discretamente antes do botão iniciar
+  startAutomationBtn.parentNode.insertBefore(badge, startAutomationBtn);
+
+  // Ao clicar na badge, abrir confirmação (apenas uma comodidade)
+  badge.addEventListener('click', () => {
+    const totalAccountsInput = document.getElementById('total-accounts');
+    const dailyAccountsValue = totalAccountsInput && totalAccountsInput.value ? parseInt(totalAccountsInput.value.trim()) : 0;
+    const expected = dailyAccountsValue > 0 ? Math.min(dailyAccountsValue, accounts.length) : accounts.length;
+    const selected = dailyAccountsValue > 0 ? Math.min(dailyAccountsValue, accounts.length) : accounts.length;
+    if (selected < expected) {
+      showAutomationConfirm(selected, expected);
+    } else {
+      showToast('A seleção cobre o total esperado.', 'success', 2000);
+    }
+  });
+}
+
+function updateAutomationBadge() {
+  const badgeSelected = document.getElementById('badge-selected');
+  const badgeExpected = document.getElementById('badge-expected');
+  const totalAccountsInput = document.getElementById('total-accounts');
+  const dailyAccountsValue = totalAccountsInput && totalAccountsInput.value ? parseInt(totalAccountsInput.value.trim()) : 0;
+  const expected = dailyAccountsValue > 0 ? Math.min(dailyAccountsValue, accounts.length) : accounts.length;
+  const selected = dailyAccountsValue > 0 ? Math.min(dailyAccountsValue, accounts.length) : accounts.length;
+
+  if (badgeSelected) badgeSelected.textContent = String(selected);
+  if (badgeExpected) badgeExpected.textContent = String(expected);
+
+  // subtle color hint when selected < expected
+  const badge = document.getElementById('automation-badge');
+  if (badge) {
+    if (selected < expected) {
+      badge.classList.add('automation-badge-warning');
+      badge.title = `${selected} de ${expected} selecionadas — confirmar antes de iniciar.`;
+    } else {
+      badge.classList.remove('automation-badge-warning');
+      badge.title = 'Seleção completa';
+    }
+  }
+}
+
+// Modal de confirmação reutilizando o estilo .custom-confirm-dialog já presente
+function ensureAutomationConfirmDialog() {
+  if (document.getElementById('automation-confirm-dialog')) return;
+
+  const dlg = document.createElement('div');
+  dlg.id = 'automation-confirm-dialog';
+  dlg.className = 'custom-confirm-dialog';
+  dlg.innerHTML = `
+    <div class="confirm-content">
+      <div class="confirm-header">
+        <div class="confirm-title">Confirmar início da automação</div>
+        <button class="confirm-close" id="automation-confirm-close">×</button>
+      </div>
+      <div class="confirm-body">
+        <div class="confirm-icon">⚠️</div>
+        <div class="confirm-message" id="automation-confirm-message"></div>
+      </div>
+      <div class="confirm-actions">
+        <label style="display:flex;align-items:center;gap:8px;margin-right:auto;color:#b9bbbe;font-size:12px;">
+          <input type="checkbox" id="automation-confirm-skip-today" /> Não mostrar novamente hoje
+        </label>
+        <button class="confirm-btn confirm-cancel" id="automation-confirm-cancel">Cancelar</button>
+        <button class="confirm-btn confirm-confirm" id="automation-confirm-ok">Iniciar</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(dlg);
+
+  // Close handlers
+  dlg.querySelector('#automation-confirm-close').addEventListener('click', () => hideAutomationConfirm());
+  dlg.querySelector('#automation-confirm-cancel').addEventListener('click', () => hideAutomationConfirm());
+  dlg.querySelector('#automation-confirm-ok').addEventListener('click', async () => {
+    const skip = document.getElementById('automation-confirm-skip-today');
+    if (skip && skip.checked) {
+      const today = new Date().toISOString().slice(0, 10);
+      localStorage.setItem('automationConfirmSkipDate', today);
+    }
+    hideAutomationConfirm();
+    if (pendingAutomationConfig) {
+      // proceed with start
+      await proceedStartAutomation(pendingAutomationConfig);
+      pendingAutomationConfig = null;
+    }
+  });
+}
+
+function showAutomationConfirm(selected, expected) {
+  ensureAutomationConfirmDialog();
+  const dlg = document.getElementById('automation-confirm-dialog');
+  const msg = document.getElementById('automation-confirm-message');
+  if (msg) msg.innerHTML = `Você selecionou <strong>${selected}</strong> contas, mas o esperado é <strong>${expected}</strong>.<br>Deseja iniciar mesmo assim?`;
+  dlg.classList.add('show');
+}
+
+function hideAutomationConfirm() {
+  const dlg = document.getElementById('automation-confirm-dialog');
+  if (dlg) dlg.classList.remove('show');
+}
+
+async function proceedStartAutomation(config) {
+  try {
+    const result = await window.electron.automation.start(config);
+    console.log('📋 Resultado:', result);
+
+    if (result.success) {
+      if (startAutomationBtn) startAutomationBtn.style.display = 'none';
+      if (stopAutomationBtn) stopAutomationBtn.style.display = 'inline-block';
+
+      const logContainer = document.getElementById('automation-log');
+      if (logContainer) {
+        const logEntry = document.createElement('div');
+        logEntry.className = 'log-entry success';
+        logEntry.textContent = '🚀 Automação iniciada com sucesso!';
+        logContainer.appendChild(logEntry);
+        logContainer.scrollTop = logContainer.scrollHeight;
+      }
+    } else {
+      if (!result.suppressNotification) {
+        showNotification('❌ Erro ao iniciar automação: ' + (result.message || 'Erro desconhecido'), 'error');
+      } else {
+        console.log('⚠️ Notificação suprimida pelo main:', result.message);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Erro ao iniciar automação (proceed):', error);
+    showNotification('Erro ao iniciar automação: ' + (error.message || error), 'error');
+  }
+}
 // Função para validar se há nicks suficientes para iniciar automação
 function validateAutomationStart() {
   const statNicksLoaded = document.getElementById('stat-nicks-loaded');
@@ -4125,9 +4303,23 @@ if (startAutomationBtn) {
           return;
         }
 
-        // Obter IDs das contas visíveis na página atual
-        const visibleAccountIds = getVisibleAccountIds();
-        console.log(`👁️ Contas visíveis: ${visibleAccountIds.length}`);
+        // Decidir lista autoritativa de `accountIds` para o main
+        // Preferimos usar a configuração de "Contas Diárias" quando informada
+        // Reutilizar o elemento `totalAccountsInput` definido anteriormente neste escopo
+        const dailyAccountsValue = (typeof totalAccountsInput !== 'undefined' && totalAccountsInput && totalAccountsInput.value)
+          ? parseInt(totalAccountsInput.value.trim())
+          : 0;
+
+        // Se o usuário informou quantas contas usa por dia, selecione as primeiras N contas
+        // do array `accounts`. Caso contrário, envie a lista completa de contas.
+        let selectedAccountIds = [];
+        if (dailyAccountsValue && Number.isFinite(dailyAccountsValue) && dailyAccountsValue > 0) {
+          selectedAccountIds = accounts.slice(0, dailyAccountsValue).map(a => a.id);
+        } else {
+          selectedAccountIds = accounts.map(a => a.id);
+        }
+
+        console.log(`👁️ Contas selecionadas para execução: ${selectedAccountIds.length} (dailyAccounts=${dailyAccountsValue || 'auto'})`);
 
         // Verificar novamente se a lista é suficiente (proteção extra)
         if (!validateAutomationStart()) {
@@ -4136,38 +4328,29 @@ if (startAutomationBtn) {
         }
 
         const config = {
-          accountIds: visibleAccountIds, // IDs das contas visíveis
+          accountIds: selectedAccountIds, // Lista autoritativa de IDs a processar
         };
 
         console.log('⚙️ Configuração:', config);
 
-        const result = await window.electron.automation.start(config);
-        console.log('📋 Resultado:', result);
+        // Verificação de confirmação: se a seleção for menor que o esperado, pedir confirmação
+        const taInputForConfirm = document.getElementById('total-accounts');
+        const dailyAccountsConfirmValue = taInputForConfirm && taInputForConfirm.value ? parseInt(taInputForConfirm.value.trim()) : 0;
+        const expected = dailyAccountsConfirmValue > 0 ? Math.min(dailyAccountsConfirmValue, accounts.length) : accounts.length;
+        const selected = selectedAccountIds.length;
 
-        if (result.success) {
-          // Mostrar botões de controle
-          if (startAutomationBtn) startAutomationBtn.style.display = 'none';
-          if (stopAutomationBtn) stopAutomationBtn.style.display = 'inline-block';
+        const skipDate = localStorage.getItem('automationConfirmSkipDate');
+        const today = new Date().toISOString().slice(0,10);
 
-          // Adicionar log
-          const logContainer = document.getElementById('automation-log');
-          if (logContainer) {
-            const logEntry = document.createElement('div');
-            logEntry.className = 'log-entry success';
-            logEntry.textContent = '🚀 Automação iniciada com sucesso!';
-            logContainer.appendChild(logEntry);
-            logContainer.scrollTop = logContainer.scrollHeight;
-          }
-        } else {
-          // Algumas respostas são informativas (ex: falta de nicks, índice preservado).
-          // O main process pode sinalizar `suppressNotification: true` para evitar
-          // mostrar um alerta de erro ao usuário nesses casos.
-          if (!result.suppressNotification) {
-            showNotification('❌ Erro ao iniciar automação: ' + (result.message || 'Erro desconhecido'), 'error');
-          } else {
-            console.log('⚠️ Notificação de erro suprimida (mensagem do main):', result.message);
-          }
+        if (selected < expected && skipDate !== today) {
+          // Guardar config pendente e abrir modal de confirmação
+          pendingAutomationConfig = config;
+          showAutomationConfirm(selected, expected);
+          return;
         }
+
+        // Se não precisa confirmar, prosseguir diretamente
+        await proceedStartAutomation(config);
       } else {
         console.error('❌ Método de automação não disponível');
         showNotification('Erro: Sistema de automação não disponível', 'error');
@@ -4578,5 +4761,23 @@ init();
 
 // Inicializar melhorias de feedback visual
 initializeVisualFeedback();
+
+// Criar badge discreta e listeners adicionais após inicialização visual
+try {
+  createAutomationBadge();
+  updateAutomationBadge();
+  const totalAccountsInput = document.getElementById('total-accounts');
+  if (totalAccountsInput) {
+    totalAccountsInput.addEventListener('input', () => updateAutomationBadge());
+  }
+  // Atualiza badge quando contas são atualizadas pelo main
+  window.electron.on('accounts-updated', async () => {
+    accounts = await window.electron.invoke('get-accounts');
+    renderAccounts();
+    updateAutomationBadge();
+  });
+} catch (e) {
+  log('⚠️ Não foi possível inicializar a badge de automação:', e);
+}
 
 // Modal de captcha removido - usando resolução manual

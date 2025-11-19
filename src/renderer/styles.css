@@ -1509,6 +1509,46 @@
   box-shadow: 0 4px 12px rgba(255, 152, 0, 0.4);
 }
 
+/* Badge discreta de automação (Selecionadas / Esperadas) */
+.automation-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,107,53,0.06);
+  color: #e6e6e6;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  margin-right: 8px;
+}
+
+.automation-badge:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+}
+
+.automation-badge .badge-label {
+  color: #b9bbbe;
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.automation-badge .badge-count {
+  color: #ffffff;
+  background: rgba(0,0,0,0.18);
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.automation-badge-warning {
+  border-color: rgba(255,165,0,0.18);
+  box-shadow: 0 4px 14px rgba(255,165,0,0.06);
+}
+
 /* Container das abas com setas de navegação */
 .avatar-tabs-container {
   display: flex;
