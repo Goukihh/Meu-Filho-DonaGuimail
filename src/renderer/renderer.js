@@ -10,7 +10,7 @@ const log = isDev ? console.log : () => {};
 // IMPORTANTE: isto NÃO remove nem deleta contas — apenas altera a
 // contagem exibida por página na UI para facilitar testes.
 // Defina para `null` para usar o cálculo dinâmico baseado na largura.
-const FORCE_ACCOUNTS_PER_PAGE_FOR_TEST = 3; // desabilitado por padrão
+const FORCE_ACCOUNTS_PER_PAGE_FOR_TEST = null; // desabilitado por padrão
 
 
 let accounts = [];
