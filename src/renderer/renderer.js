@@ -10,7 +10,7 @@ const log = isDev ? console.log : () => {};
 // IMPORTANTE: isto NÃO remove nem deleta contas — apenas altera a
 // contagem exibida por página na UI para facilitar testes.
 // Defina para `null` para usar o cálculo dinâmico baseado na largura.
-const FORCE_ACCOUNTS_PER_PAGE_FOR_TEST = null; // desabilitado por padrão
+const FORCE_ACCOUNTS_PER_PAGE_FOR_TEST = 3; // desabilitado por padrão
 
 
 let accounts = [];
@@ -4401,13 +4401,31 @@ if (startAutomationBtn) {
           ? parseInt(totalAccountsInput.value.trim())
           : 0;
 
-        // Se o usuário informou quantas contas usa por dia, selecione as primeiras N contas
-        // do array `accounts`. Caso contrário, envie a lista completa de contas.
+        // Selecionar as contas a partir da página atual (visíveis) e preencher com
+        // contas das páginas seguintes até atingir o número diário. Isso garante
+        // que iniciar na página 3 realmente processe as contas daquela página.
         let selectedAccountIds = [];
-        if (dailyAccountsValue && Number.isFinite(dailyAccountsValue) && dailyAccountsValue > 0) {
-          selectedAccountIds = accounts.slice(0, dailyAccountsValue).map(a => a.id);
-        } else {
+        const totalToSelect = dailyAccountsValue && Number.isFinite(dailyAccountsValue) && dailyAccountsValue > 0
+          ? dailyAccountsValue
+          : accounts.length;
+
+        if (!Number.isFinite(totalToSelect) || totalToSelect <= 0) {
           selectedAccountIds = accounts.map(a => a.id);
+        } else {
+          // Começar na página atual
+          let page = currentPage || 0;
+          const totalPages = Math.ceil(accounts.length / (ACCOUNTS_PER_PAGE || 1));
+          while (selectedAccountIds.length < totalToSelect) {
+            const startIndex = page * (ACCOUNTS_PER_PAGE || 1);
+            if (startIndex >= accounts.length) break; // sem mais contas
+            const endIndex = Math.min(startIndex + (ACCOUNTS_PER_PAGE || 1), accounts.length);
+            for (let i = startIndex; i < endIndex && selectedAccountIds.length < totalToSelect; i++) {
+              selectedAccountIds.push(accounts[i].id);
+            }
+            page++;
+            // Segurança: evitar loop infinito
+            if (page > totalPages + 2) break;
+          }
         }
 
         console.log(`👁️ Contas selecionadas para execução: ${selectedAccountIds.length} (dailyAccounts=${dailyAccountsValue || 'auto'})`);

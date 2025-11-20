@@ -5206,6 +5206,9 @@ app.whenReady().then(async () => {
         currentLeva: currentLeva, // ✅ Carregar leva atual de settings.json
         currentCiclo: savedProgress?.currentCiclo || 1, // ✅ Restaurar ciclo salvo
         currentAccountIndex: savedProgress?.currentAccountIndex || 0, // ✅ Restaurar conta salva
+        currentAccountId: savedProgress?.currentAccountId || null,
+        // Flag indicando que existia progresso salvo no momento do start
+        savedProgressExists: !!savedProgress,
         totalInvitesSent: savedProgress?.totalInvitesSent || 0, // ✅ Restaurar contador salvo
         config: config,
         nicksList: loadedNicks, // ✅ Usar nicks do arquivo persistente
@@ -5255,11 +5258,33 @@ app.whenReady().then(async () => {
   // COMPORTAMENTO: tentar pré-carregar/attach da BrowserView inicial e reduzir espera
   automationLog('⏳ Pré-carregando BrowserView inicial e iniciando automação em breve');
   try {
-    const firstAccountId = automationEngine && Array.isArray(automationEngine.accountIds) ? automationEngine.accountIds[0] : null;
-    if (firstAccountId) {
-      automationLog(`🔧 Pré-carregando BrowserView para conta inicial: ${firstAccountId}`);
+    // Decide a conta inicial a ser pré-carregada com base no progresso restaurado
+    let initialAccountId = null;
+    try {
+      if (automationEngine) {
+        // Preferir ID de conta salvo (mais robusto que índice)
+        if (automationEngine.currentAccountId) {
+          initialAccountId = automationEngine.currentAccountId;
+        } else if (typeof automationEngine.currentAccountIndex === 'number' && Array.isArray(automationEngine.accountIds) && automationEngine.accountIds.length > 0) {
+          // Mapear índice preservado para o array de accountIds visíveis
+          const idx = automationEngine.currentAccountIndex;
+          if (idx >= 0 && idx < automationEngine.accountIds.length) {
+            initialAccountId = automationEngine.accountIds[idx];
+          }
+        }
+        // Fallback para a primeira conta visível se nada mais disponível
+        if (!initialAccountId && Array.isArray(automationEngine.accountIds) && automationEngine.accountIds.length > 0) {
+          initialAccountId = automationEngine.accountIds[0];
+        }
+      }
+    } catch (e) {
+      logWarn('⚠️ Erro ao determinar initialAccountId para pré-carregamento:', e && e.message ? e.message : e);
+    }
+
+    if (initialAccountId) {
+      automationLog(`🔧 Pré-carregando BrowserView para conta inicial determinada: ${initialAccountId}`);
       // Tentar trocar/attach imediatamente para evitar tela cinza
-      try { await switchToAccount(firstAccountId); } catch (e) { logWarn('⚠️ Falha no pré-carregamento da BrowserView:', e && e.message ? e.message : e); }
+      try { await switchToAccount(initialAccountId); } catch (e) { logWarn('⚠️ Falha no pré-carregamento da BrowserView:', e && e.message ? e.message : e); }
       // Pequena espera para estabilizar bounds/render
       await sleep(300);
     }
@@ -6994,6 +7019,25 @@ app.whenReady().then(async () => {
       // Filtrar contas baseado nos IDs visíveis
       const visibleAccountIds = automationEngine.accountIds || [];
       const groupAccounts = accounts.filter(acc => visibleAccountIds.includes(acc.id));
+
+      // Se havia progresso salvo, garantir que a conta atual salva esteja
+      // presente no conjunto a processar; caso contrário, inserir essa conta
+      // no início do grupo para que a restauração continue exatamente onde parou.
+      try {
+        if (automationEngine && automationEngine.savedProgressExists && automationEngine.currentAccountId) {
+          const exists = groupAccounts.find(a => a.id === automationEngine.currentAccountId);
+          if (!exists) {
+            const savedAcc = accounts.find(a => a.id === automationEngine.currentAccountId);
+            if (savedAcc) {
+              // Inserir no começo para garantir mapeamento correto de índices
+              groupAccounts.unshift(savedAcc);
+              automationLog(`🔁 Conta salva (${savedAcc.name}) adicionada ao início do grupo para restauração`);
+            }
+          }
+        }
+      } catch (e) {
+        logWarn('⚠️ Erro ao garantir inclusão da conta salva no grupo de contas:', e && e.message ? e.message : e);
+      }
 
       // === BARRIERA DIÁRIA (ENFORCE DAILY LIMIT) ===
       // Carregar número da leva atual e progresso associado para saber quantas
