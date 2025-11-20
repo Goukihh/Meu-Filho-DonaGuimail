@@ -2,6 +2,17 @@
 const isDev = false;
 const log = isDev ? console.log : () => {};
 
+// ---------- MODO DE TESTE (temporário) ----------
+// Para facilitar testes manuais, você pode forçar um número fixo de
+// contas visíveis por página definindo `FORCE_ACCOUNTS_PER_PAGE_FOR_TEST`.
+// Defina para `3` para testar facilmente levas fragmentadas; para restaurar
+// ao comportamento dinâmico, altere para `null` ou remova esta linha.
+// IMPORTANTE: isto NÃO remove nem deleta contas — apenas altera a
+// contagem exibida por página na UI para facilitar testes.
+// Defina para `null` para usar o cálculo dinâmico baseado na largura.
+const FORCE_ACCOUNTS_PER_PAGE_FOR_TEST = null; // desabilitado por padrão
+
+
 let accounts = [];
 let currentContextMenuAccountId = null;
 let modalMode = 'add';
@@ -145,6 +156,12 @@ function calculateAccountsPerPage() {
   // Bloquear recalculo automático se modo de teste estiver ativo
   if (window.__teste_mode) {
     log('🔬 [TESTE] Modo de teste ativo - ACCOUNTS_PER_PAGE fixo:', ACCOUNTS_PER_PAGE);
+    return;
+  }
+  // Se o modo de teste for definido manualmente, forçar o valor e sair
+  if (typeof FORCE_ACCOUNTS_PER_PAGE_FOR_TEST === 'number' && Number.isFinite(FORCE_ACCOUNTS_PER_PAGE_FOR_TEST)) {
+    ACCOUNTS_PER_PAGE = Math.max(1, Math.floor(FORCE_ACCOUNTS_PER_PAGE_FOR_TEST));
+    log(`🔬 [TESTE] Forçando ACCOUNTS_PER_PAGE = ${ACCOUNTS_PER_PAGE}`);
     return;
   }
   const screenWidth = window.innerWidth;
@@ -499,6 +516,42 @@ async function init() {
     loadingTabs.forEach(tab => tab.classList.remove('loading'));
   });
 
+  // Receber atualizações de contas vindas do processo principal
+  // Handler unificado: aceita payload opcional; se não receber payload, busca do main
+  window.electron.on('accounts-updated', async (updatedAccounts) => {
+    try {
+      console.log('🔁 Recebido accounts-updated do main; atualizando UI (unificado)');
+
+      if (Array.isArray(updatedAccounts)) {
+        accounts = updatedAccounts;
+      } else {
+        // Fallback robusto: buscar estado atual do main
+        try {
+          accounts = await window.electron.invoke('get-accounts');
+        } catch (err) {
+          console.error('❌ Falha ao buscar contas via get-accounts fallback:', err);
+          // Manter estado atual se falhar
+        }
+      }
+
+      // Garantir que a página atual ainda faz sentido
+      const totalPages = Math.max(1, Math.ceil((accounts && accounts.length) ? accounts.length / ACCOUNTS_PER_PAGE : 0));
+      // Se houver uma conta ativa, garantir que a página mostre-a
+      const activeIndex = accounts.findIndex(acc => acc && acc.active);
+      if (activeIndex !== -1) {
+        currentPage = Math.floor(activeIndex / ACCOUNTS_PER_PAGE);
+        // Clamp
+        if (currentPage < 0) currentPage = 0;
+        if (currentPage >= totalPages) currentPage = totalPages - 1;
+      } else {
+        if (currentPage >= totalPages) currentPage = Math.max(0, totalPages - 1);
+      }
+      renderAccounts();
+    } catch (e) {
+      console.error('Erro ao processar accounts-updated unificado:', e);
+    }
+  });
+
   // Listener para atualização de foto de perfil
   window.electron.on('profile-picture-updated', (accountId, avatarUrl) => {
     console.log(`🖼️ Avatar atualizado para ${accountId}:`, avatarUrl);
@@ -613,6 +666,16 @@ function renderAccounts() {
     avatarTabsContainer.appendChild(fragment);
 
     console.log(`✅ Renderização concluída: ${avatarTabsContainer.children.length} abas criadas`);
+    // Garantir que a aba ativa esteja visível (quando há muitas páginas)
+    try {
+      const activeTab = avatarTabsContainer.querySelector('.avatar-tab.active');
+      if (activeTab && typeof activeTab.scrollIntoView === 'function') {
+        // scrollIntoView com alinhamento horizontal para garantir visibilidade
+        activeTab.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'auto' });
+      }
+    } catch (e) {
+      console.warn('⚠️ Falha ao rolar para aba ativa:', e);
+    }
     try {
       updateAutomationBadge();
     } catch (e) {
@@ -1225,9 +1288,35 @@ window.electron.on('profile-picture-updated', (accountId, profilePictureUrl) => 
   }
 });
 
-window.electron.on('accounts-updated', async () => {
-  accounts = await window.electron.invoke('get-accounts');
-  renderAccounts();
+
+// Registrar contas que foram marcadas como skipped durante a leva atual
+const skippedAccountsUI = new Set();
+
+// Quando o main marcar uma conta como skip, mostrar aviso discreto e atualizar UI
+window.electron.on('account-skipped', ({ accountId, reason } = {}) => {
+  try {
+    if (!accountId) return;
+    skippedAccountsUI.add(accountId);
+    // Mostrar toast com motivo (se houver)
+    const reasonMsg = reason ? ` (${reason})` : '';
+    showToast(`Conta pulada: ${accountId}${reasonMsg}`, 'warning', 4500);
+    // Atualizar indicador visual da aba
+    updateAccountStatus(accountId, 'error');
+    // Adicionar pequeno badge visual na aba
+    const tab = document.querySelector(`.avatar-tab[data-account-id="${accountId}"]`);
+    if (tab) {
+      let skipBadge = tab.querySelector('.skip-badge');
+      if (!skipBadge) {
+        skipBadge = document.createElement('div');
+        skipBadge.className = 'skip-badge';
+        skipBadge.title = 'Conta pulada nesta leva';
+        skipBadge.textContent = '⚠';
+        tab.appendChild(skipBadge);
+      }
+    }
+  } catch (e) {
+    console.warn('Erro ao processar account-skipped no renderer:', e);
+  }
 });
 
 // Listener para solicitar renomeação (também usado para remover e limpar sessão)
@@ -3994,8 +4083,9 @@ function createAutomationBadge() {
 
   badge.innerHTML = `
     <div class="automation-badge-inner">
-      <span class="badge-label">Selecionadas</span>
-      <span class="badge-count"><span id="badge-selected">0</span>/<span id="badge-expected">0</span></span>
+      <span class="badge-visible"><strong id="badge-visible">0</strong> visíveis</span>
+      <span class="badge-sep">·</span>
+      <span class="badge-selected"><strong id="badge-selected">0</strong> selecionadas</span>
     </div>
   `;
 
@@ -4018,24 +4108,25 @@ function createAutomationBadge() {
 
 function updateAutomationBadge() {
   const badgeSelected = document.getElementById('badge-selected');
-  const badgeExpected = document.getElementById('badge-expected');
+  const badgeVisible = document.getElementById('badge-visible');
   const totalAccountsInput = document.getElementById('total-accounts');
   const dailyAccountsValue = totalAccountsInput && totalAccountsInput.value ? parseInt(totalAccountsInput.value.trim()) : 0;
   const expected = dailyAccountsValue > 0 ? Math.min(dailyAccountsValue, accounts.length) : accounts.length;
   const selected = dailyAccountsValue > 0 ? Math.min(dailyAccountsValue, accounts.length) : accounts.length;
+  const visible = getVisibleAccountIds().length;
 
   if (badgeSelected) badgeSelected.textContent = String(selected);
-  if (badgeExpected) badgeExpected.textContent = String(expected);
+  if (badgeVisible) badgeVisible.textContent = String(visible);
 
-  // subtle color hint when selected < expected
+  // subtle color hint when visible < selected (selection includes other pages)
   const badge = document.getElementById('automation-badge');
   if (badge) {
-    if (selected < expected) {
+    if (visible < selected) {
       badge.classList.add('automation-badge-warning');
-      badge.title = `${selected} de ${expected} selecionadas — confirmar antes de iniciar.`;
+      badge.title = `Visíveis: ${visible} — Seleção: ${selected} (inclui contas em outras páginas). Clique para confirmar.`;
     } else {
       badge.classList.remove('automation-badge-warning');
-      badge.title = 'Seleção completa';
+      badge.title = 'A seleção corresponde ao que está visível.';
     }
   }
 }
@@ -4329,6 +4420,7 @@ if (startAutomationBtn) {
 
         const config = {
           accountIds: selectedAccountIds, // Lista autoritativa de IDs a processar
+          accountsPerPage: ACCOUNTS_PER_PAGE || null, // informar main quantas contas por página a UI mostra
         };
 
         console.log('⚙️ Configuração:', config);
@@ -4771,11 +4863,7 @@ try {
     totalAccountsInput.addEventListener('input', () => updateAutomationBadge());
   }
   // Atualiza badge quando contas são atualizadas pelo main
-  window.electron.on('accounts-updated', async () => {
-    accounts = await window.electron.invoke('get-accounts');
-    renderAccounts();
-    updateAutomationBadge();
-  });
+  // Note: accounts-updated is handled by the unified listener above.
 } catch (e) {
   log('⚠️ Não foi possível inicializar a badge de automação:', e);
 }

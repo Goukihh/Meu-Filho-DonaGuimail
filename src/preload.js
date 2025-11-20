@@ -83,6 +83,10 @@ contextBridge.exposeInMainWorld('electron', {
   panelClosed: () => Promise.resolve({ success: true, resumed: false }),
     saveWebhook: url => ipcRenderer.invoke('automation-save-webhook', url),
   },
+  // Ferramentas de desenvolvedor (exposição segura)
+  devtools: {
+    openMain: () => ipcRenderer.invoke('open-main-devtools')
+  },
   // Métodos para limpeza de DMs e amigos
   cleanup: {
     start: accountIds => ipcRenderer.invoke('cleanup-start', accountIds),
