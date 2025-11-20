@@ -20,6 +20,9 @@ let editingAccountId = null;
 // Flag para suprimir toasts repetidos quando a automação entra em waiting-for-nicks
 let __automationWaitingToastShown = false;
 
+// Estado UI da automação (iniciado/parado)
+let automationUIRunning = false;
+
 // Paginação
 let currentPage = 0;
 // =============================
@@ -51,7 +54,7 @@ const imageObserver = new IntersectionObserver(
 );
 
 // DOM elements
-const avatarTabsContainer = document.getElementById('avatar-tabs');
+let avatarTabsContainer = document.getElementById('avatar-tabs');
 const addAccountBtn = document.getElementById('add-account-btn');
 const addAccountModal = document.getElementById('add-account-modal');
 const accountNameInput = document.getElementById('account-name');
@@ -630,6 +633,11 @@ function renderAccounts() {
 
     if (accounts.length === 0) {
       console.log('⚠️ Nenhuma conta para renderizar');
+      // Remover contador inline se houver (não mostrar durante loading/vazio)
+      try {
+        const existing = document.getElementById('inline-page-counter');
+        if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+      } catch (e) { /* ignore */ }
       updateNavigationButtons();
       return;
     }
@@ -665,6 +673,14 @@ function renderAccounts() {
     // Adicionar todas as abas de uma vez para melhor performance
     avatarTabsContainer.appendChild(fragment);
 
+    // Criar/atualizar contador inline após renderizar as abas
+    try {
+      createInlinePageCounter();
+      updateInlinePageCounter();
+    } catch (e) {
+      // silencioso
+    }
+
     console.log(`✅ Renderização concluída: ${avatarTabsContainer.children.length} abas criadas`);
     // Garantir que a aba ativa esteja visível (quando há muitas páginas)
     try {
@@ -684,6 +700,97 @@ function renderAccounts() {
     }
   } catch (error) {
     console.error('❌ Erro na renderização de contas:', error);
+  }
+}
+
+// ===== Contador inline minimalista =====
+function createInlinePageCounter() {
+  try {
+    // Evitar recriação
+    if (document.getElementById('inline-page-counter')) return;
+
+    // Preferir o container com classe .avatar-tabs-container (mais provável como wrapper)
+    const container = document.querySelector('.avatar-tabs-container') || document.getElementById('avatar-tabs')?.parentElement;
+    if (!container) return; // será tentado novamente na próxima renderização
+
+    // Garantir que o container permita posicionamento absoluto (position: relative)
+    try {
+      const cs = window.getComputedStyle(container);
+      if (cs && cs.position === 'static') container.style.position = 'relative';
+    } catch (e) {
+      // ignore
+    }
+
+    const counter = document.createElement('div');
+    counter.id = 'inline-page-counter';
+    counter.className = 'inline-page-counter overlay';
+    counter.setAttribute('aria-hidden', 'false');
+
+    // Estilo do contador como overlay absoluto para NÃO afetar o fluxo/layout
+    const style = document.createElement('style');
+    style.id = 'inline-page-counter-style';
+    style.textContent = `
+      .inline-page-counter.overlay {
+        position: absolute !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        bottom: 1px !important; /* subir mais 2px para ficar claramente acima da linha laranja */
+        pointer-events: none !important;
+        z-index: 99999 !important; /* garantir visibilidade acima dos webviews */
+        /* aplicar gradiente semelhante ao título "Meu Filho" */
+        /* gradiente elegante em tons de branco/cinza */
+        background: linear-gradient(90deg, #ffffff 0%, #e6e6e6 45%, #bfbfbf 100%) !important;
+        -webkit-background-clip: text !important;
+        background-clip: text !important;
+        color: transparent !important; /* texto preenchido pelo gradiente */
+        font-family: 'Karina', 'Inter', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important;
+        font-weight: 600 !important;
+        font-size: 14px !important; /* um pouco maior para melhor leitura */
+        padding: 0 !important; /* sem padding para ser apenas números */
+        border-radius: 0 !important;
+        max-width: none !important;
+        box-shadow: none !important;
+        text-align: center !important;
+        line-height: 1 !important;
+        user-select: none !important;
+        display: inline-block !important;
+        letter-spacing: 0.2px !important;
+        text-shadow: 0 4px 10px rgba(0,0,0,0.6) !important; /* sombra mais borrada e elegante */
+      }
+      @media (max-width: 420px) {
+        .inline-page-counter.overlay { bottom: 2px !important; font-size: 12px !important; padding: 0 !important; }
+      }
+    `;
+
+    if (!document.getElementById('inline-page-counter-style')) document.head.appendChild(style);
+
+    // Anexar ao container (posição absoluta com bottom negativo evita push do layout)
+    container.appendChild(counter);
+  } catch (e) {
+    console.warn('⚠️ createInlinePageCounter erro:', e);
+  }
+}
+
+function updateInlinePageCounter() {
+  try {
+    const counter = document.getElementById('inline-page-counter');
+    if (!counter) return;
+    const totalPages = Math.max(1, Math.ceil((accounts && accounts.length) ? accounts.length / ACCOUNTS_PER_PAGE : 0));
+    counter.textContent = `${currentPage + 1}/${totalPages}`;
+    // Em casos de largura pequena, garantir que o contador não ultrapasse a largura do container
+    try {
+      const container = document.querySelector('.avatar-tabs-container') || document.getElementById('avatar-tabs')?.parentElement;
+      if (container) {
+        const cw = container.getBoundingClientRect().width || window.innerWidth;
+        if (cw < 320) {
+          counter.style.maxWidth = `${Math.max(120, cw - 40)}px`;
+        } else {
+          counter.style.maxWidth = '220px';
+        }
+      }
+    } catch (e) { /* ignore */ }
+  } catch (e) {
+    // silencioso
   }
 }
 
@@ -713,6 +820,12 @@ function updateNavigationButtons() {
   console.log(
     `📄 Página ${currentPage + 1}/${totalPages} - Mostrando contas ${startIndex + 1}-${endIndex} de ${accounts.length}`
   );
+  try {
+    // Atualizar contador inline se existir
+    if (typeof updateInlinePageCounter === 'function') updateInlinePageCounter();
+  } catch (e) {
+    // silencioso
+  }
 }
 
 // Navegar para página anterior
@@ -746,6 +859,11 @@ function goToNextPage() {
   }
 }
 
+// Overlay page counter disabled. Using inline counter (below the avatar tabs)
+// Inline counter is created/updated by `renderAccounts()` via
+// `createInlinePageCounter()` / `updateInlinePageCounter()`.
+
+// Criar elemento de aba de conta
 // Criar elemento de aba de conta
 function createAccountTab(account) {
   try {
